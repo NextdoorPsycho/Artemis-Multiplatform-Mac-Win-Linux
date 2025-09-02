@@ -1640,7 +1640,7 @@ jobs:
             sources:
               - type: archive
                 url: https://github.com/intel/libva/releases/download/2.22.0/libva-2.22.0.tar.bz2
-                sha256: 467c418c2640a178c6baad5be2e00976ad14e8848a0165a6790d0bb40060b0ce
+                sha256: e3da2250654c8d52b3f59f8cb3f3d8e7fb1a2ee64378dbc400fbc5663de7edb8
           
           # Build Intel VA-API driver for compatibility
           - name: intel-vaapi-driver
