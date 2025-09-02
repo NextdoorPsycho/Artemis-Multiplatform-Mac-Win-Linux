@@ -1548,12 +1548,30 @@ jobs:
           - --filesystem=home
           # GPU and hardware acceleration access (critical for Steam Deck and desktop)
           - --device=dri
-          # Enable access to host graphics drivers (Mesa, NVIDIA, etc.)
+          # Enable access to host graphics drivers and libraries for better compatibility
           - --filesystem=host-os
           - --filesystem=/usr/share/drirc.d:ro
-          # Allow access to VA-API and VDPAU hardware decode libraries
+          - --filesystem=/sys/dev/char:ro
+          - --filesystem=/sys/devices/pci0000:00:ro
+          - --filesystem=/proc/cpuinfo:ro
+          # Allow access to host system libraries for driver compatibility
+          - --filesystem=/usr/lib/x86_64-linux-gnu:ro
+          - --filesystem=/lib/x86_64-linux-gnu:ro
+          # Enhanced environment variables for hardware acceleration (universal GPU support)
           - --env=LIBVA_DRIVERS_PATH=/run/host/usr/lib/x86_64-linux-gnu/dri:/run/host/usr/lib/dri:/usr/lib/x86_64-linux-gnu/dri
           - --env=VDPAU_DRIVER_PATH=/run/host/usr/lib/x86_64-linux-gnu/vdpau:/run/host/usr/lib/vdpau:/usr/lib/x86_64-linux-gnu/vdpau
+          # Auto-detect VA-API driver (don't force specific driver)
+          - --env=GST_VAAPI_DRM_DEVICE=/dev/dri/renderD128
+          # Universal Vulkan ICD paths for AMD (Steam Deck), Intel, and NVIDIA
+          - --env=VK_ICD_FILENAMES=/run/host/usr/share/vulkan/icd.d/radeon_icd.x86_64.json:/run/host/usr/share/vulkan/icd.d/intel_icd.x86_64.json:/run/host/usr/share/vulkan/icd.d/nvidia_icd.json:/usr/share/vulkan/icd.d/radeon_icd.x86_64.json:/usr/share/vulkan/icd.d/intel_icd.x86_64.json:/usr/share/vulkan/icd.d/nvidia_icd.json
+          # Allow software fallback for Vulkan if hardware fails
+          - --env=PLVK_ALLOW_SOFTWARE=1
+          # Steam Deck and AMD GPU optimizations
+          - --env=RADV_PERFTEST=gpl
+          - --env=AMD_VULKAN_ICD=RADV
+          # Universal Mesa optimizations
+          - --env=MESA_GLTHREAD=true
+          - --env=MESA_NO_ERROR=1
         add-extensions:
           # Mount host GL/Vulkan drivers from the Freedesktop runtime
           org.freedesktop.Platform.GL.default:
