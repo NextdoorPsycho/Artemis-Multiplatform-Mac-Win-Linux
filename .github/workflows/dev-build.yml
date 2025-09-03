@@ -1642,17 +1642,6 @@ jobs:
                 url: https://github.com/intel/libva/releases/download/2.22.0/libva-2.22.0.tar.bz2
                 sha256: e3da2250654c8d52b3f59f8cb3f3d8e7fb1a2ee64378dbc400fbc5663de7edb8
           
-          # Build Intel VA-API driver for compatibility
-          - name: intel-vaapi-driver
-            buildsystem: autotools
-            config-opts:
-              - --enable-hybrid-codec
-              - --with-drivers-path=/app/lib/dri
-            sources:
-              - type: archive
-                url: https://github.com/intel/intel-vaapi-driver/releases/download/2.4.1/intel-vaapi-driver-2.4.1.tar.bz2
-                sha256: 0081fce08eb3a83f7d99c3b853c8fdfa0af437b8f5b0fb7c66faeb83bcbe0c19
-          
           # Build libplacebo from source for Vulkan/HDR support (critical for Steam Deck)
           - name: libplacebo
             buildsystem: meson
