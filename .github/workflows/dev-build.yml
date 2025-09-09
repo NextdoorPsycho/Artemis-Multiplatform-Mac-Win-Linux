@@ -1546,69 +1546,48 @@ jobs:
           - --socket=pulseaudio
           - --share=network
           - --filesystem=home
-          # GPU and hardware acceleration access (critical for Steam Deck and desktop)
+          # GPU and hardware acceleration access
           - --device=dri
-          # Enable access to host graphics drivers and libraries
-          - --filesystem=host-os
-          - --filesystem=/run/host/usr/share/vulkan:ro
-          - --filesystem=/run/host/usr/lib/x86_64-linux-gnu:ro
-          - --filesystem=/run/host/lib/x86_64-linux-gnu:ro
-          - --filesystem=/run/host/usr/lib:ro
-          - --filesystem=/run/host/lib:ro
-          # Allow access to system device information
+          # Keep system device info for diagnostics (read-only)
           - --filesystem=/sys/dev/char:ro
           - --filesystem=/sys/class/drm:ro
-          # Enhanced environment variables for hardware acceleration (universal GPU support)
-          - --env=LIBVA_DRIVERS_PATH=/run/host/usr/lib/x86_64-linux-gnu/dri:/run/host/usr/lib/dri:/app/lib/dri:/usr/lib/x86_64-linux-gnu/dri
-          - --env=VDPAU_DRIVER_PATH=/run/host/usr/lib/x86_64-linux-gnu/vdpau:/run/host/usr/lib/vdpau:/app/lib/vdpau:/usr/lib/x86_64-linux-gnu/vdpau
-          # Universal Vulkan ICD paths for AMD (Steam Deck), Intel, and NVIDIA
-          - --env=VK_ICD_FILENAMES=/run/host/usr/share/vulkan/icd.d/radeon_icd.x86_64.json:/run/host/usr/share/vulkan/icd.d/intel_icd.x86_64.json:/run/host/usr/share/vulkan/icd.d/nvidia_icd.json:/usr/share/vulkan/icd.d/radeon_icd.x86_64.json:/usr/share/vulkan/icd.d/intel_icd.x86_64.json:/usr/share/vulkan/icd.d/nvidia_icd.json
-          # Vulkan layer paths
-          - --env=VK_LAYER_PATH=/run/host/usr/share/vulkan/explicit_layer.d:/run/host/usr/share/vulkan/implicit_layer.d:/usr/share/vulkan/explicit_layer.d:/usr/share/vulkan/implicit_layer.d
-          # Library path for compatibility
-          - --env=LD_LIBRARY_PATH=/app/lib:/usr/lib/x86_64-linux-gnu:/run/host/usr/lib/x86_64-linux-gnu:/run/host/lib/x86_64-linux-gnu
-          # Auto-detect VA-API driver (don't force specific driver)
+          # Prefer runtime-provided VA-API drivers mounted via extensions
+          - --env=LIBVA_DRIVERS_PATH=/app/vaapi-intel/lib/dri:/app/vaapi-amd/lib/dri:/usr/lib/x86_64-linux-gnu/dri:/usr/lib/dri
+          # Auto-detect render node
           - --env=GST_VAAPI_DRM_DEVICE=/dev/dri/renderD128
           # Allow software fallback for Vulkan if hardware fails
           - --env=PLVK_ALLOW_SOFTWARE=1
-          # Steam Deck and AMD GPU optimizations
-          - --env=RADV_PERFTEST=gpl
-          - --env=AMD_VULKAN_ICD=RADV
-          # Universal Mesa optimizations
+          # Mesa/SDL optimizations
           - --env=MESA_GLTHREAD=true
           - --env=MESA_NO_ERROR=1
-          # SDL specific optimizations
           - --env=SDL_VIDEO_X11_FORCE_EGL=1
         add-extensions:
-          # Mount host GL/Vulkan drivers from the Freedesktop runtime
+          # GL (Mesa) driver extension that matches the runtime branch
           org.freedesktop.Platform.GL.default:
             version: '23.08'
             directory: gl-default
             subdirectories: true
-            no-autodownload: true
-            autodelete: false
+            no-autodownload: false
             add-ld-path: lib
+          # NVIDIA GL driver extension (auto-installs if applicable)
           org.freedesktop.Platform.GL.nvidia:
             version: '23.08'
             directory: gl-nvidia
             subdirectories: true
-            no-autodownload: true
-            autodelete: false
+            no-autodownload: false
             add-ld-path: lib
-          # Mount host VA-API drivers for hardware video decode
+          # VA-API drivers for hardware decode (Intel and AMD)
           org.freedesktop.Platform.VAAPI.Intel:
             version: '23.08'
             directory: vaapi-intel
             subdirectories: true
-            no-autodownload: true
-            autodelete: false
+            no-autodownload: false
             add-ld-path: lib
           org.freedesktop.Platform.VAAPI.AMD:
             version: '23.08'
             directory: vaapi-amd
             subdirectories: true
-            no-autodownload: true
-            autodelete: false
+            no-autodownload: false
             add-ld-path: lib
         modules:
           - name: opus
@@ -1761,7 +1740,8 @@ jobs:
         VERSION: ${{ needs.setup-version.outputs.version }}
       run: |
         flatpak-builder --force-clean --repo=repo build-dir com.artemisdesktop.ArtemisDesktopDev.yml
-        flatpak build-bundle repo artemis-flatpak-$VERSION.flatpak com.artemisdesktop.ArtemisDesktopDev
+        # Build a bundle that embeds Flathub as the runtime repo so runtime + GPU extensions auto-install
+        flatpak build-bundle --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo repo artemis-flatpak-$VERSION.flatpak com.artemisdesktop.ArtemisDesktopDev
     
     - name: Upload Flatpak Development Artifacts
       uses: actions/upload-artifact@v4

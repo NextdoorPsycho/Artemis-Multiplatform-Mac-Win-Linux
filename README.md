@@ -139,6 +139,24 @@ This is normal for development builds and doesn't indicate actual damage to the 
 > - Enhanced error handling and logging
 > - Improved compatibility with latest server versions
 
+### Linux Flatpak (Development Bundle)
+
+The CI-generated .flatpak embeds Flathub as the runtime repo and auto-installs the matching GPU driver extensions for org.kde.Platform 6.6. No extra setup or environment variables are required.
+
+Install:
+```bash
+flatpak install --user ./artemis-flatpak-<VERSION>.flatpak
+```
+
+Run:
+```bash
+flatpak run com.artemisdesktop.ArtemisDesktopDev
+```
+
+Notes:
+- Hardware decoding requires real hardware; most VMs won’t expose VA-API/Vulkan surfaces. In VMs, Artemis will fall back to software decoding.
+- If you previously set LIBVA_* overrides, remove them for Flatpak; the app detects the proper driver via extensions.
+
 ## 🎮 Moonlight Features (Inherited)
  - Hardware accelerated video decoding on Windows, Mac, and Linux
  - H.264, HEVC, and AV1 codec support (AV1 requires Sunshine and a supported host GPU)
@@ -207,7 +225,7 @@ sudo dnf install qt6-qtbase-devel qt6-qtdeclarative-devel \
 git submodule update --init --recursive
 
 # Configure and build
-qmake6 moonlight-qt.pro CONFIG+=release
+qmake6 artemis.pro CONFIG+=release
 make -j$(nproc)  # Linux
 make -j$(sysctl -n hw.ncpu)  # macOS
 nmake  # Windows
