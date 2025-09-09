@@ -1621,6 +1621,38 @@ jobs:
                 url: https://github.com/intel/libva/releases/download/2.22.0/libva-2.22.0.tar.bz2
                 sha256: e3da2250654c8d52b3f59f8cb3f3d8e7fb1a2ee64378dbc400fbc5663de7edb8
           
+          # NVIDIA NVDEC/NVENC support (headers)
+          - name: nv-codec-headers
+            buildsystem: simple
+            build-commands:
+              - make -j$(nproc)
+              - make PREFIX=/app install
+            sources:
+              - type: git
+                url: https://github.com/FFmpeg/nv-codec-headers.git
+                branch: master
+          
+          # Custom FFmpeg with CUDA/NVDEC/NVENC, VAAPI, and VDPAU (shared libs in /app/lib)
+          - name: ffmpeg
+            buildsystem: simple
+            build-commands:
+              - |
+                ./configure \
+                  --prefix=/app \
+                  --enable-shared --disable-static \
+                  --disable-debug \
+                  --enable-gpl --enable-nonfree \
+                  --enable-libdrm --enable-vaapi --enable-vdpau \
+                  --enable-cuda-llvm --enable-nvenc --enable-nvdec --enable-cuvid \
+                  --enable-libvulkan --enable-libplacebo \
+                  --enable-openssl
+              - make -j$(nproc)
+              - make install
+            sources:
+              - type: git
+                url: https://github.com/FFmpeg/FFmpeg.git
+                branch: release/6.1
+          
           # Build libplacebo from source for Vulkan/HDR support (critical for Steam Deck)
           - name: libplacebo
             buildsystem: meson
@@ -1707,6 +1739,8 @@ jobs:
               - rm -rf AntiHooking/ || true
               - rm -rf config.tests/SL/ || true
               - rm -f app/test_*.cpp || true
+              # Ensure our pkg-config entries (ffnvcodec, ffmpeg libs) are found first
+              - export PKG_CONFIG_PATH=/app/lib/pkgconfig:${PKG_CONFIG_PATH}
               - qmake6 artemis.pro CONFIG+=release "QMAKE_CXXFLAGS+=-fPIC"
               - make -j$(nproc)
               - install -Dm755 app/artemis /app/bin/artemis-dev
