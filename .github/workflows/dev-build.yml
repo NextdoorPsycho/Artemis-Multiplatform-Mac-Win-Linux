@@ -1636,6 +1636,7 @@ jobs:
           - name: ffmpeg
             buildsystem: simple
             build-commands:
+              - export PKG_CONFIG_PATH=/app/lib/pkgconfig:${PKG_CONFIG_PATH}
               - |
                 ./configure \
                   --prefix=/app \
@@ -1644,7 +1645,7 @@ jobs:
                   --enable-gpl --enable-nonfree \
                   --enable-libdrm --enable-vaapi --enable-vdpau \
                   --enable-cuda-llvm --enable-nvenc --enable-nvdec --enable-cuvid \
-                  --enable-libvulkan --enable-libplacebo \
+                  --enable-vulkan --enable-libplacebo \
                   --enable-openssl
               - make -j$(nproc)
               - make install
