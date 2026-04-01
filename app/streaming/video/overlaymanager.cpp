@@ -8,9 +8,9 @@ using namespace Overlay;
 namespace {
 
 constexpr int kHudWidth = 438;
-constexpr int kHudHeight = 586;
+constexpr int kHudHeight = 660;
 constexpr int kHudPadding = 16;
-constexpr int kHudSectionGap = 10;
+constexpr int kHudSectionGap = 8;
 
 SDL_Color rgba(Uint8 r, Uint8 g, Uint8 b, Uint8 a = 0xFF)
 {
@@ -345,9 +345,9 @@ SDL_Surface* OverlayManager::renderDebugOverlaySurface()
 
     TTF_Font* titleFont = getHudFont(QStringLiteral("semibold"), m_HudSemiBoldFontData, 16);
     TTF_Font* sectionTitleFont = getHudFont(QStringLiteral("semibold"), m_HudSemiBoldFontData, 13);
-    TTF_Font* valueFont = getHudFont(QStringLiteral("semibold"), m_HudSemiBoldFontData, 17);
+    TTF_Font* valueFont = getHudFont(QStringLiteral("semibold"), m_HudSemiBoldFontData, 16);
     TTF_Font* labelFont = getHudFont(QStringLiteral("medium"), m_HudMediumFontData, 10);
-    TTF_Font* bodyFont = getHudFont(QStringLiteral("regular"), m_HudRegularFontData, 11);
+    TTF_Font* bodyFont = getHudFont(QStringLiteral("regular"), m_HudRegularFontData, 10);
 
     const SDL_Color primary = rgba(245, 245, 247);
     const SDL_Color secondary = rgba(163, 163, 173);
@@ -372,13 +372,13 @@ SDL_Surface* OverlayManager::renderDebugOverlaySurface()
                   y);
     y += blitText(surface,
                   bodyFont,
-                  QStringLiteral("Renderer: %1. All values below are measured locally from the active session.")
+                  QStringLiteral("Renderer: %1")
                       .arg(stats.rendererName.isEmpty() ? QStringLiteral("Unknown renderer") : stats.rendererName),
                   secondary,
                   kHudPadding,
                   y + 1,
                   kHudWidth - (kHudPadding * 2));
-    y += 12;
+    y += 8;
 
     auto sectionRect = [&](int height) {
         SDL_Rect rect{kHudPadding, y, kHudWidth - (kHudPadding * 2), height};
@@ -389,77 +389,75 @@ SDL_Surface* OverlayManager::renderDebugOverlaySurface()
     };
 
     {
-        SDL_Rect rect = sectionRect(94);
+        SDL_Rect rect = sectionRect(74);
         int tx = rect.x + 12;
         int ty = rect.y + 10;
-        ty += blitText(surface, labelFont, QStringLiteral("CONNECTION OVERVIEW"), secondary, tx, ty);
-        ty += 4;
+        ty += blitText(surface, labelFont, QStringLiteral("SESSION"), secondary, tx, ty);
+        ty += 5;
         ty += blitText(surface,
                        valueFont,
-                       QStringLiteral("%1 Mbps active throughput").arg(QString::number(stats.bandwidthMbps, 'f', 1)),
+                       QStringLiteral("%1 Mbps").arg(QString::number(stats.bandwidthMbps, 'f', 1)),
                        primary,
                        tx,
                        ty);
-        ty += 4;
         ty += blitText(surface,
                        bodyFont,
-                       QStringLiteral("Incoming video rate is %1 FPS. Rendering is currently %2 FPS, which is what you are actually seeing on the client.")
+                       QStringLiteral("Incoming FPS: %1  |  Rendered FPS: %2")
                            .arg(QString::number(stats.incomingFps, 'f', 1))
                            .arg(QString::number(stats.renderedFps, 'f', 1)),
                        secondary,
                        tx,
-                       ty,
+                       ty + 4,
                        rect.w - 24);
     }
 
     {
-        SDL_Rect rect = sectionRect(110);
+        SDL_Rect rect = sectionRect(96);
         int tx = rect.x + 12;
         int ty = rect.y + 10;
         ty += blitText(surface, labelFont, QStringLiteral("FRAME DELIVERY"), secondary, tx, ty);
-        ty += 6;
+        ty += 5;
         ty += blitText(surface,
                        bodyFont,
-                       QStringLiteral("Incoming from host: %1 FPS").arg(QString::number(stats.incomingFps, 'f', 1)),
+                       QStringLiteral("Incoming FPS: %1").arg(QString::number(stats.incomingFps, 'f', 1)),
                        primary,
                        tx,
                        ty);
         ty += blitText(surface,
                        bodyFont,
-                       QStringLiteral("Decoded on client: %1 FPS").arg(QString::number(stats.decodedFps, 'f', 1)),
+                       QStringLiteral("Decoded FPS: %1").arg(QString::number(stats.decodedFps, 'f', 1)),
                        primary,
                        tx,
                        ty + 2);
         ty += blitText(surface,
                        bodyFont,
-                       QStringLiteral("Presented to display: %1 FPS").arg(QString::number(stats.renderedFps, 'f', 1)),
+                       QStringLiteral("Rendered FPS: %1").arg(QString::number(stats.renderedFps, 'f', 1)),
                        primary,
                        tx,
                        ty + 2);
-        ty += 6;
         ty += blitText(surface,
                        bodyFont,
-                       QStringLiteral("Frames dropped by network loss: %1%").arg(QString::number(stats.networkDropPercent, 'f', 1)),
+                       QStringLiteral("Network Loss: %1%").arg(QString::number(stats.networkDropPercent, 'f', 1)),
                        stats.networkDropPercent > 1.0f ? amber : secondary,
                        tx,
-                       ty);
+                       ty + 4);
         ty += blitText(surface,
                        bodyFont,
-                       QStringLiteral("Frames dropped by pacing or jitter handling: %1%").arg(QString::number(stats.jitterDropPercent, 'f', 1)),
+                       QStringLiteral("Network Jitter Loss: %1%").arg(QString::number(stats.jitterDropPercent, 'f', 1)),
                        stats.jitterDropPercent > 1.0f ? red : secondary,
                        tx,
                        ty + 2);
     }
 
     {
-        SDL_Rect rect = sectionRect(112);
+        SDL_Rect rect = sectionRect(106);
         int tx = rect.x + 12;
         int ty = rect.y + 10;
         ty += blitText(surface, labelFont, QStringLiteral("LATENCY AND TIMING"), secondary, tx, ty);
-        ty += 6;
+        ty += 5;
         ty += blitText(surface,
                        bodyFont,
-                       QStringLiteral("Network RTT: %1 ms  |  variance: %2 ms")
+                       QStringLiteral("RTT: %1 ms  |  Variance: %2 ms")
                            .arg(stats.networkLatencyMs > 0.0f ? QString::number(stats.networkLatencyMs, 'f', 1) : QStringLiteral("N/A"))
                            .arg(stats.networkLatencyVarianceMs > 0.0f ? QString::number(stats.networkLatencyVarianceMs, 'f', 1) : QStringLiteral("N/A")),
                        primary,
@@ -467,29 +465,28 @@ SDL_Surface* OverlayManager::renderDebugOverlaySurface()
                        ty);
         ty += blitText(surface,
                        bodyFont,
-                       QStringLiteral("Host processing: min %1 ms  avg %2 ms  max %3 ms")
+                       QStringLiteral("Host Latency: %1 / %2 / %3 ms")
                            .arg(QString::number(stats.minHostLatencyMs, 'f', 1))
                            .arg(QString::number(stats.averageHostLatencyMs, 'f', 1))
                            .arg(QString::number(stats.maxHostLatencyMs, 'f', 1)),
                        primary,
                        tx,
                        ty + 2);
-        ty += 6;
         ty += blitText(surface,
                        bodyFont,
-                       QStringLiteral("Decode time: %1 ms").arg(QString::number(stats.averageDecodeTimeMs, 'f', 2)),
+                       QStringLiteral("Decode: %1 ms").arg(QString::number(stats.averageDecodeTimeMs, 'f', 2)),
                        secondary,
                        tx,
-                       ty);
+                       ty + 4);
         ty += blitText(surface,
                        bodyFont,
-                       QStringLiteral("Frame queue delay: %1 ms").arg(QString::number(stats.averageQueueDelayMs, 'f', 2)),
+                       QStringLiteral("Queue Delay: %1 ms").arg(QString::number(stats.averageQueueDelayMs, 'f', 2)),
                        secondary,
                        tx,
                        ty + 2);
         ty += blitText(surface,
                        bodyFont,
-                       QStringLiteral("Render plus display sync: %1 ms").arg(QString::number(stats.averageRenderTimeMs, 'f', 2)),
+                       QStringLiteral("Render Sync: %1 ms").arg(QString::number(stats.averageRenderTimeMs, 'f', 2)),
                        secondary,
                        tx,
                        ty + 2);
@@ -497,29 +494,25 @@ SDL_Surface* OverlayManager::renderDebugOverlaySurface()
 
     const struct {
         QString title;
-        QString subtitle;
         QString currentValue;
         QVector<float> history;
         float ceiling;
         SDL_Color stroke;
         SDL_Color fill;
     } charts[] = {
-        {QStringLiteral("Rendered FPS history"),
-         QStringLiteral("What the client is actually presenting over time."),
+        {QStringLiteral("Rendered FPS"),
          QStringLiteral("%1 FPS").arg(QString::number(stats.renderedFps, 'f', 1)),
          stats.renderedFpsHistory,
          std::max(stats.streamFps, 60.0f),
          accent,
          rgba(56, 189, 248, 170)},
-        {QStringLiteral("Active throughput history"),
-         QStringLiteral("Measured incoming video bandwidth, not configured target bitrate."),
+        {QStringLiteral("Active Throughput"),
          QStringLiteral("%1 Mbps").arg(QString::number(stats.bandwidthMbps, 'f', 1)),
          stats.bandwidthHistory,
          std::max(stats.bandwidthMbps * 1.4f, 20.0f),
          green,
          rgba(74, 222, 128, 170)},
-        {QStringLiteral("RTT history"),
-         QStringLiteral("Round-trip network latency measured by the client."),
+        {QStringLiteral("RTT"),
          stats.networkLatencyMs > 0.0f ?
              QStringLiteral("%1 ms").arg(QString::number(stats.networkLatencyMs, 'f', 1)) :
              QStringLiteral("N/A"),
@@ -530,18 +523,17 @@ SDL_Surface* OverlayManager::renderDebugOverlaySurface()
     };
 
     for (const auto& chart : charts) {
-        SDL_Rect rect = sectionRect(100);
+        SDL_Rect rect = sectionRect(82);
         int tx = rect.x + 12;
         int ty = rect.y + 10;
         ty += blitText(surface, sectionTitleFont, chart.title, primary, tx, ty);
         blitText(surface, bodyFont, chart.currentValue, chart.stroke, rect.x + rect.w - 110, rect.y + 10);
-        ty += blitText(surface, bodyFont, chart.subtitle, secondary, tx, ty + 2, rect.w - 24);
 
         SDL_Rect graphRect{
             rect.x + 12,
-            rect.y + 42,
+            rect.y + 30,
             rect.w - 24,
-            46
+            40
         };
         drawGraph(surface, graphRect, chart.history, chart.ceiling, chart.stroke, chart.fill);
     }

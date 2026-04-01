@@ -32,7 +32,10 @@ QString Path::getQmlCacheDir()
 QByteArray Path::readDataFile(QString fileName)
 {
     QFile dataFile(getDataFilePath(fileName));
-    dataFile.open(QIODevice::ReadOnly);
+    if (!dataFile.open(QIODevice::ReadOnly)) {
+        qWarning() << "Failed to open data file" << dataFile.fileName();
+        return {};
+    }
     return dataFile.readAll();
 }
 
@@ -93,8 +96,15 @@ QString Path::getDataFilePath(QString fileName)
         return candidatePath;
     }
 
-    // Return the QRC embedded copy
+    // Fall back to QRC embedded copies. Most runtime-loaded assets live in /data,
+    // but some newer UI resources are embedded at the root prefix.
     candidatePath = ":/data/" + fileName;
+    if (QFile::exists(candidatePath)) {
+        qInfo() << "Found" << fileName << "at" << candidatePath;
+        return candidatePath;
+    }
+
+    candidatePath = ":/" + fileName;
     qInfo() << "Found" << fileName << "at" << candidatePath;
     return QString(candidatePath);
 }
