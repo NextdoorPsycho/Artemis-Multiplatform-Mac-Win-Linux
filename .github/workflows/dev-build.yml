@@ -559,14 +559,48 @@ jobs:
       run: |
         # Find and set up Qt ARM64 environment
         echo "Setting up Qt ARM64 environment..."
-        $qtArm64Path = "D:\a\artemis\Qt\6.8.3\msvc2022_arm64"
         
-        if (-not (Test-Path $qtArm64Path)) {
-          echo "ERROR: Qt ARM64 not found at expected path: $qtArm64Path"
-          echo "Available Qt installations:"
-          Get-ChildItem "D:\a\artemis\Qt\6.8.3" -ErrorAction SilentlyContinue | Select-Object Name
+        # Search for Qt ARM64 in all possible locations
+        $possiblePaths = @(
+          "D:\a\Artemis-Multiplatform-Mac-Win-Linux\Qt\6.8.3\msvc2022_arm64",
+          "D:\a\artemis\Qt\6.8.3\msvc2022_arm64",
+          "D:\a\Qt\6.8.3\msvc2022_arm64"
+        )
+        
+        $qtArm64Path = $null
+        foreach ($path in $possiblePaths) {
+          if (Test-Path $path) {
+            $qtArm64Path = $path
+            break
+          }
+        }
+        
+        if (-not $qtArm64Path) {
+          echo "ERROR: Qt ARM64 not found in any expected location"
+          echo "Searching all D:\a for Qt ARM64..."
+          Get-ChildItem "D:\a" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            $qtPath = Join-Path $_.FullName "Qt\6.8.3\msvc2022_arm64"
+            if (Test-Path $qtPath) {
+              echo "Found: $qtPath"
+              $qtArm64Path = $qtPath
+            }
+          }
+        }
+        
+        if (-not $qtArm64Path) {
+          echo "ERROR: Qt ARM64 not found"
+          echo "Available Qt 6.8.3 directories:"
+          Get-ChildItem "D:\a" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            $qtDir = Join-Path $_.FullName "Qt\6.8.3"
+            if (Test-Path $qtDir) {
+              echo "  $($_.FullName)\Qt\6.8.3"
+              Get-ChildItem $qtDir -Directory -ErrorAction SilentlyContinue | Select-Object Name
+            }
+          }
           exit 1
         }
+        
+        echo "Found Qt ARM64 at: $qtArm64Path"
         
         # Set Qt environment
         $env:Qt6_DIR = $qtArm64Path
