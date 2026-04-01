@@ -418,7 +418,7 @@ exit /b 0
 
 :Error
 echo Build failed!
-exit /b !ERRORLEVEL!
+exit /b 1
 
 :CheckQmakeResult
 echo DEBUG: qmake returned with exit code: %ERRORLEVEL%
