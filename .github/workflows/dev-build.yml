@@ -756,8 +756,27 @@ jobs:
       env:
         SEMANTIC_VERSION: ${{ needs.setup-version.outputs.version }}
       run: |
-        # Set up Qt ARM64 environment
-        $qtArm64Path = "D:\a\artemis\Qt\6.8.3\msvc2022_arm64"
+        # Set up Qt ARM64 environment - search in all possible locations
+        $possiblePaths = @(
+          "D:\a\Artemis-Multiplatform-Mac-Win-Linux\Qt\6.8.3\msvc2022_arm64",
+          "D:\a\artemis\Qt\6.8.3\msvc2022_arm64",
+          "D:\a\Qt\6.8.3\msvc2022_arm64"
+        )
+        
+        $qtArm64Path = $null
+        foreach ($path in $possiblePaths) {
+          if (Test-Path $path) {
+            $qtArm64Path = $path
+            break
+          }
+        }
+        
+        if (-not $qtArm64Path) {
+          echo "ERROR: Qt ARM64 not found in any expected location"
+          exit 1
+        }
+        
+        echo "Found Qt ARM64 at: $qtArm64Path"
         $env:Qt6_DIR = $qtArm64Path
         $env:PATH = "$qtArm64Path\bin;$env:PATH"
         
