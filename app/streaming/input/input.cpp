@@ -410,6 +410,7 @@ void SdlInputHandler::setCaptureActive(bool active)
                 handleMouseMotionEvent(&motionEvent);
             }
         }
+
     }
     else {
         if (m_FakeCaptureActive) {

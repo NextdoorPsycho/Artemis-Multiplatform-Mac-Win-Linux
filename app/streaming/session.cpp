@@ -2245,11 +2245,18 @@ void Session::execInternal()
     // Toggle the stats overlay if requested by the user
     m_OverlayManager.setOverlayState(Overlay::OverlayDebug, m_Preferences->showPerformanceOverlay);
 
+#ifdef Q_OS_DARWIN
+    const bool useDesktopRelativeMousePolling = isDesktopStyleSession() && !m_Preferences->absoluteMouseMode;
+#else
+    const bool useDesktopRelativeMousePolling = false;
+#endif
+
     // Hijack this thread to be the SDL main thread. We have to do this
     // because we want to suspend all Qt processing until the stream is over.
     SDL_Event event;
     for (;;) {
 #if SDL_VERSION_ATLEAST(2, 0, 18) && !defined(STEAM_LINK)
+        if (!useDesktopRelativeMousePolling) {
         // SDL 2.0.18 has a proper wait event implementation that uses platform
         // support to block on events rather than polling on Windows, macOS, X11,
         // and Wayland. It will fall back to 1 ms polling if a joystick is
@@ -2263,12 +2270,22 @@ void Session::execInternal()
             presence.runCallbacks();
             continue;
         }
+        }
+        else if (!SDL_PollEvent(&event)) {
+            m_InputHandler->pollDesktopMouse();
+            SDL_Delay(1);
+            presence.runCallbacks();
+            continue;
+        }
 #else
         // We explicitly use SDL_PollEvent() and SDL_Delay() because
         // SDL_WaitEvent() has an internal SDL_Delay(10) inside which
         // blocks this thread too long for high polling rate mice and high
         // refresh rate displays.
         if (!SDL_PollEvent(&event)) {
+            if (useDesktopRelativeMousePolling) {
+                m_InputHandler->pollDesktopMouse();
+            }
 #ifndef STEAM_LINK
             SDL_Delay(1);
 #else
@@ -2280,6 +2297,9 @@ void Session::execInternal()
             continue;
         }
 #endif
+        if (useDesktopRelativeMousePolling) {
+            m_InputHandler->pollDesktopMouse();
+        }
         switch (event.type) {
         case SDL_QUIT:
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,

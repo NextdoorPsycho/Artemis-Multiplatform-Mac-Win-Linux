@@ -78,6 +78,13 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
         // Ignore synthetic mouse events
         return;
     }
+#ifdef Q_OS_DARWIN
+    else if (m_HighFrequencyMouseMotion && !m_AbsoluteMouseMode && SDL_GetRelativeMouseMode()) {
+        // On macOS, desktop-style sessions use polled relative mouse state to avoid
+        // sparse hover-motion delivery from SDL when no mouse button is held.
+        return;
+    }
+#endif
 
     Sint32 x = event->x, y = event->y, xrel = event->xrel, yrel = event->yrel;
     if (!m_HighFrequencyMouseMotion) {
@@ -155,6 +162,22 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
     else {
         LiSendMouseMoveEvent(xrel, yrel);
     }
+}
+
+void SdlInputHandler::pollDesktopMouse()
+{
+    if (!m_HighFrequencyMouseMotion || m_AbsoluteMouseMode || !isCaptureActive() || !SDL_GetRelativeMouseMode()) {
+        return;
+    }
+
+    int xrel = 0;
+    int yrel = 0;
+    SDL_GetRelativeMouseState(&xrel, &yrel);
+    if (xrel == 0 && yrel == 0) {
+        return;
+    }
+
+    LiSendMouseMoveEvent(xrel, yrel);
 }
 
 void SdlInputHandler::handleMouseWheelEvent(SDL_MouseWheelEvent* event)
