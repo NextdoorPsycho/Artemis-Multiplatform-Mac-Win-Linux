@@ -224,7 +224,7 @@ public:
             if (m_MetalLayer.displaySyncEnabled) {
                 // Pace ourselves by waiting if too many frames are pending presentation
                 SDL_LockMutex(m_PresentationMutex);
-                if (m_PendingPresentationCount > 2) {
+                if (m_PendingPresentationCount >= 2) {
                     if (SDL_CondWaitTimeout(m_PresentationCond, m_PresentationMutex, 100) == SDL_MUTEX_TIMEDOUT) {
                         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                                     "Presentation wait timed out after 100 ms");
@@ -647,9 +647,6 @@ public:
         // Flip to the newly rendered buffer
         [commandBuffer presentDrawable:m_NextDrawable];
         [commandBuffer commit];
-
-        // Wait for the command buffer to complete and free our CVMetalTextureCache references
-        [commandBuffer waitUntilCompleted];
 
         [m_NextDrawable release];
         m_NextDrawable = nullptr;

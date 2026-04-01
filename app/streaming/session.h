@@ -201,6 +201,8 @@ private:
 
     void updateOptimalWindowDisplayMode();
 
+    bool isDesktopStyleSession() const;
+
     enum class DecoderAvailability {
         None,
         Software,

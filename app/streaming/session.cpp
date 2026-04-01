@@ -57,6 +57,7 @@
 #include <QCursor>
 #include <QWindow>
 #include <QScreen>
+#include <QHostAddress>
 
 #define CONN_TEST_SERVER "qt.conntest.moonlight-stream.org"
 
@@ -78,6 +79,32 @@ CONNECTION_LISTENER_CALLBACKS Session::k_ConnCallbacks = {
 
 Session* Session::s_ActiveSession;
 QSemaphore Session::s_ActiveSessionSemaphore(1);
+
+static bool isPrivateOrLocalAddress(const QString& address)
+{
+    if (address.endsWith(QStringLiteral(".local"), Qt::CaseInsensitive)) {
+        return true;
+    }
+
+    QHostAddress hostAddress;
+    if (!hostAddress.setAddress(address)) {
+        return false;
+    }
+
+    if (hostAddress.isLoopback() || hostAddress.isLinkLocal()) {
+        return true;
+    }
+
+    if (hostAddress.protocol() == QAbstractSocket::IPv4Protocol) {
+        return hostAddress.isInSubnet(QHostAddress(QStringLiteral("10.0.0.0")), 8) ||
+               hostAddress.isInSubnet(QHostAddress(QStringLiteral("172.16.0.0")), 12) ||
+               hostAddress.isInSubnet(QHostAddress(QStringLiteral("192.168.0.0")), 16) ||
+               hostAddress.isInSubnet(QHostAddress(QStringLiteral("169.254.0.0")), 16);
+    }
+
+    return hostAddress.isInSubnet(QHostAddress(QStringLiteral("fc00::")), 7) ||
+           hostAddress.isInSubnet(QHostAddress(QStringLiteral("fe80::")), 10);
+}
 
 void Session::clStageStarting(int stage)
 {
@@ -1066,7 +1093,7 @@ bool Session::validateLaunch(SDL_Window* testWindow)
         return false;
     }
 
-    if (m_Preferences->absoluteMouseMode && !m_App.isAppCollectorGame) {
+    if (m_Preferences->absoluteMouseMode && !isDesktopStyleSession()) {
         emitLaunchWarning(tr("Your selection to enable remote desktop mouse mode may cause problems in games."));
     }
 
@@ -1341,6 +1368,18 @@ bool Session::validateLaunch(SDL_Window* testWindow)
     }
 
     return true;
+}
+
+bool Session::isDesktopStyleSession() const
+{
+    if (m_App.isAppCollectorGame || m_Preferences->useVirtualDisplay) {
+        return true;
+    }
+
+    const QString appName = m_App.name.trimmed().toLower();
+    return appName == QStringLiteral("desktop") ||
+           appName == QStringLiteral("virtual display") ||
+           appName == QStringLiteral("virtual desktop");
 }
 
 
@@ -1745,7 +1784,31 @@ bool Session::startConnectionAsync()
         return false;
     }
 
-    QByteArray hostnameStr = m_Computer->activeAddress.address().toLatin1();
+    NvComputer::ReachabilityType activeReachability = m_Computer->getActiveAddressReachability();
+    NvAddress streamAddress = m_Computer->activeAddress;
+    if (activeReachability != NvComputer::RI_VPN) {
+        if (!m_Computer->localAddress.isNull() &&
+            isPrivateOrLocalAddress(m_Computer->localAddress.address())) {
+            streamAddress = m_Computer->localAddress;
+        }
+        else if (!m_Computer->manualAddress.isNull() &&
+                 isPrivateOrLocalAddress(m_Computer->manualAddress.address())) {
+            streamAddress = m_Computer->manualAddress;
+        }
+        else if (!m_Computer->ipv6Address.isNull() &&
+                 isPrivateOrLocalAddress(m_Computer->ipv6Address.address())) {
+            streamAddress = m_Computer->ipv6Address;
+        }
+    }
+
+    if (streamAddress != m_Computer->activeAddress) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Using preferred local stream address %s instead of %s",
+                    qPrintable(streamAddress.toString()),
+                    qPrintable(m_Computer->activeAddress.toString()));
+    }
+
+    QByteArray hostnameStr = streamAddress.address().toLatin1();
     QByteArray siAppVersion = m_Computer->appVersion.toLatin1();
 
     SERVER_INFORMATION hostInfo;
@@ -1779,12 +1842,12 @@ bool Session::startConnectionAsync()
                     m_Preferences->packetSize);
     }
     else {
-        // Use 1392 byte video packets by default
+        // Use the standard local packet size by default.
         m_StreamConfig.packetSize = 1392;
 
         // getActiveAddressReachability() does network I/O, so we only attempt to check
         // reachability if we've already contacted the PC successfully.
-        switch (m_Computer->getActiveAddressReachability()) {
+        switch (activeReachability) {
         case NvComputer::RI_LAN:
             // This address is on-link, so treat it as a local address
             // even if it's not in RFC 1918 space or it's an IPv6 address.
@@ -1797,8 +1860,20 @@ bool Session::startConnectionAsync()
             m_StreamConfig.packetSize = 1024;
             break;
         default:
-            // If we don't have reachability info, let moonlight-common-c decide.
-            m_StreamConfig.streamingRemotely = STREAM_CFG_AUTO;
+            // Fall back to local heuristics for mDNS/private/manual addresses before
+            // punting to AUTO, which can be overly conservative on wired LAN setups.
+            if (isPrivateOrLocalAddress(m_Computer->activeAddress.address()) ||
+                isPrivateOrLocalAddress(m_Computer->localAddress.address()) ||
+                isPrivateOrLocalAddress(m_Computer->manualAddress.address()) ||
+                isPrivateOrLocalAddress(m_Computer->ipv6Address.address())) {
+                m_StreamConfig.streamingRemotely = STREAM_CFG_LOCAL;
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                            "Treating host as local based on address heuristics");
+            }
+            else {
+                // If we don't have reachability info, let moonlight-common-c decide.
+                m_StreamConfig.streamingRemotely = STREAM_CFG_AUTO;
+            }
             break;
         }
     }
@@ -1930,7 +2005,10 @@ void Session::execInternal()
 
     // Initialize the gamepad code with our preferences
     // NB: m_InputHandler must be initialize before starting the connection.
-    m_InputHandler = new SdlInputHandler(*m_Preferences, m_StreamConfig.width, m_StreamConfig.height);
+    m_InputHandler = new SdlInputHandler(*m_Preferences,
+                                         m_StreamConfig.width,
+                                         m_StreamConfig.height,
+                                         isDesktopStyleSession());
 
     AsyncConnectionStartThread asyncConnThread(this);
     if (!m_ThreadedExec) {
@@ -2578,4 +2656,3 @@ DispatchDeferredCleanup:
     // reference.
     QThreadPool::globalInstance()->start(new DeferredSessionCleanupTask(this));
 }
-

@@ -39,6 +39,8 @@ private:
                                 bool useAlternateFrontend);
 
     void stringifyVideoStats(VIDEO_STATS& stats, char* output, int length);
+    void appendHudSample(QQueue<float>& history, float value);
+    Overlay::OverlayManager::DebugOverlaySnapshot buildDebugOverlaySnapshot(const VIDEO_STATS& stats) const;
 
     void logVideoStats(VIDEO_STATS& stats, const char* title);
 
@@ -102,6 +104,9 @@ private:
     VIDEO_STATS m_ActiveWndVideoStats;
     VIDEO_STATS m_LastWndVideoStats;
     VIDEO_STATS m_GlobalVideoStats;
+    QQueue<float> m_RenderedFpsHistory;
+    QQueue<float> m_BandwidthHistory;
+    QQueue<float> m_LatencyHistory;
     std::set<IFFmpegRenderer::RendererType> m_FailedRenderers;
 
     int m_FramesIn;

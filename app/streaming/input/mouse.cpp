@@ -79,18 +79,21 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
         return;
     }
 
-    // Batch all pending mouse motion events to save CPU time
     Sint32 x = event->x, y = event->y, xrel = event->xrel, yrel = event->yrel;
-    SDL_Event nextEvent;
-    while (SDL_PeepEvents(&nextEvent, 1, SDL_GETEVENT, SDL_MOUSEMOTION, SDL_MOUSEMOTION) > 0) {
-        event = &nextEvent.motion;
+    if (!m_HighFrequencyMouseMotion) {
+        // Batch all pending mouse motion events to save CPU time during game streaming.
+        // Desktop-style sessions keep full-frequency motion to preserve cursor fidelity.
+        SDL_Event nextEvent;
+        while (SDL_PeepEvents(&nextEvent, 1, SDL_GETEVENT, SDL_MOUSEMOTION, SDL_MOUSEMOTION) > 0) {
+            event = &nextEvent.motion;
 
-        // Ignore synthetic mouse events
-        if (event->which != SDL_TOUCH_MOUSEID) {
-            x = event->x;
-            y = event->y;
-            xrel += event->xrel;
-            yrel += event->yrel;
+            // Ignore synthetic mouse events
+            if (event->which != SDL_TOUCH_MOUSEID) {
+                x = event->x;
+                y = event->y;
+                xrel += event->xrel;
+                yrel += event->yrel;
+            }
         }
     }
 

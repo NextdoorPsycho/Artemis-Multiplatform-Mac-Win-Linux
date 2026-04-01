@@ -355,12 +355,12 @@ void Pacer::renderFrame(AVFrame* frame)
         frameDropTarget = 1;
     }
     else {
-        frameDropTarget = 0;
+        frameDropTarget = 1;
         for (int queueHistoryEntry : m_RenderQueueHistory) {
-            if (queueHistoryEntry == 0) {
+            if (queueHistoryEntry <= 1) {
                 // Be lenient as long as the queue length
                 // resolves before the end of frame history
-                frameDropTarget = 2;
+                frameDropTarget = 3;
                 break;
             }
         }

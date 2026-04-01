@@ -5,6 +5,7 @@
 #include "settings/streamingpreferences.h"
 
 #include <h264_stream.h>
+#include <algorithm>
 
 extern "C" {
 #include <libavutil/mastering_display_metadata.h>
@@ -784,6 +785,7 @@ void FFmpegVideoDecoder::addVideoStats(VIDEO_STATS& src, VIDEO_STATS& dst)
     dst.decodedFrames += src.decodedFrames;
     dst.renderedFrames += src.renderedFrames;
     dst.totalFrames += src.totalFrames;
+    dst.receivedBytes += src.receivedBytes;
     dst.networkDroppedFrames += src.networkDroppedFrames;
     dst.pacerDroppedFrames += src.pacerDroppedFrames;
     dst.totalReassemblyTime += src.totalReassemblyTime;
@@ -825,6 +827,76 @@ void FFmpegVideoDecoder::addVideoStats(VIDEO_STATS& src, VIDEO_STATS& dst)
     dst.receivedFps = (float)dst.receivedFrames / ((float)(now - dst.measurementStartTimestamp) / 1000);
     dst.decodedFps = (float)dst.decodedFrames / ((float)(now - dst.measurementStartTimestamp) / 1000);
     dst.renderedFps = (float)dst.renderedFrames / ((float)(now - dst.measurementStartTimestamp) / 1000);
+}
+
+void FFmpegVideoDecoder::appendHudSample(QQueue<float>& history, float value)
+{
+    static constexpr int kHudHistoryLength = 48;
+
+    if (history.count() == kHudHistoryLength) {
+        history.dequeue();
+    }
+    history.enqueue(value);
+}
+
+Overlay::OverlayManager::DebugOverlaySnapshot FFmpegVideoDecoder::buildDebugOverlaySnapshot(const VIDEO_STATS& stats) const
+{
+    Overlay::OverlayManager::DebugOverlaySnapshot snapshot;
+    snapshot.valid = true;
+
+    const float elapsedSeconds = stats.measurementStartTimestamp != 0 ?
+                std::max(0.001f, (SDL_GetTicks() - stats.measurementStartTimestamp) / 1000.0f) :
+                1.0f;
+
+    snapshot.streamWidth = m_VideoDecoderCtx != nullptr ? m_VideoDecoderCtx->width : 0;
+    snapshot.streamHeight = m_VideoDecoderCtx != nullptr ? m_VideoDecoderCtx->height : 0;
+    snapshot.rendererName = m_FrontendRenderer != nullptr ? QString::fromUtf8(m_FrontendRenderer->getRendererName()) : QString();
+    snapshot.streamFps = stats.totalFps;
+    snapshot.incomingFps = stats.receivedFps;
+    snapshot.decodedFps = stats.decodedFps;
+    snapshot.renderedFps = stats.renderedFps;
+    snapshot.bandwidthMbps = (stats.receivedBytes * 8.0f) / elapsedSeconds / 1000000.0f;
+    snapshot.networkDropPercent = stats.totalFrames != 0 ? (float)stats.networkDroppedFrames / stats.totalFrames * 100.0f : 0.0f;
+    snapshot.jitterDropPercent = stats.decodedFrames != 0 ? (float)stats.pacerDroppedFrames / stats.decodedFrames * 100.0f : 0.0f;
+    snapshot.networkLatencyMs = stats.lastRtt != 0 ? (float)stats.lastRtt : 0.0f;
+    snapshot.networkLatencyVarianceMs = stats.lastRtt != 0 ? (float)stats.lastRttVariance : 0.0f;
+    snapshot.averageDecodeTimeMs = stats.decodedFrames != 0 ? (float)stats.totalDecodeTime / stats.decodedFrames : 0.0f;
+    snapshot.averageQueueDelayMs = stats.renderedFrames != 0 ? (float)stats.totalPacerTime / stats.renderedFrames : 0.0f;
+    snapshot.averageRenderTimeMs = stats.renderedFrames != 0 ? (float)stats.totalRenderTime / stats.renderedFrames : 0.0f;
+
+    if (stats.framesWithHostProcessingLatency > 0) {
+        snapshot.minHostLatencyMs = (float)stats.minHostProcessingLatency / 10.0f;
+        snapshot.averageHostLatencyMs = (float)stats.totalHostProcessingLatency / 10.0f / stats.framesWithHostProcessingLatency;
+        snapshot.maxHostLatencyMs = (float)stats.maxHostProcessingLatency / 10.0f;
+    }
+
+    switch (m_VideoFormat)
+    {
+    case VIDEO_FORMAT_H264:
+    case VIDEO_FORMAT_H264_HIGH8_444:
+        snapshot.codecName = QStringLiteral("H.264");
+        break;
+    case VIDEO_FORMAT_H265:
+    case VIDEO_FORMAT_H265_MAIN10:
+    case VIDEO_FORMAT_H265_REXT8_444:
+    case VIDEO_FORMAT_H265_REXT10_444:
+        snapshot.codecName = QStringLiteral("HEVC");
+        break;
+    case VIDEO_FORMAT_AV1_MAIN8:
+    case VIDEO_FORMAT_AV1_MAIN10:
+    case VIDEO_FORMAT_AV1_HIGH8_444:
+    case VIDEO_FORMAT_AV1_HIGH10_444:
+        snapshot.codecName = QStringLiteral("AV1");
+        break;
+    default:
+        snapshot.codecName = QStringLiteral("Unknown");
+        break;
+    }
+
+    snapshot.renderedFpsHistory = QVector<float>(m_RenderedFpsHistory.cbegin(), m_RenderedFpsHistory.cend());
+    snapshot.bandwidthHistory = QVector<float>(m_BandwidthHistory.cbegin(), m_BandwidthHistory.cend());
+    snapshot.latencyHistory = QVector<float>(m_LatencyHistory.cbegin(), m_LatencyHistory.cend());
+    return snapshot;
 }
 
 void FFmpegVideoDecoder::stringifyVideoStats(VIDEO_STATS& stats, char* output, int length)
@@ -966,12 +1038,14 @@ void FFmpegVideoDecoder::stringifyVideoStats(VIDEO_STATS& stats, char* output, i
                        length - offset,
                        "Frames dropped by your network connection: %.2f%%\n"
                        "Frames dropped due to network jitter: %.2f%%\n"
+                       "Active bandwidth: %.2f Mbps\n"
                        "Average network latency: %s\n"
                        "Average decoding time: %.2f ms\n"
                        "Average frame queue delay: %.2f ms\n"
                        "Average rendering time (including monitor V-sync latency): %.2f ms\n",
                        (float)stats.networkDroppedFrames / stats.totalFrames * 100,
                        (float)stats.pacerDroppedFrames / stats.decodedFrames * 100,
+                       ((stats.receivedBytes * 8.0f) / SDL_max(0.001f, (SDL_GetTicks() - stats.measurementStartTimestamp) / 1000.0f)) / 1000000.0f,
                        rttString,
                        (float)stats.totalDecodeTime / stats.decodedFrames,
                        (float)stats.totalPacerTime / stats.renderedFrames,
@@ -1923,7 +1997,12 @@ int FFmpegVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
             stringifyVideoStats(lastTwoWndStats,
                                 Session::get()->getOverlayManager().getOverlayText(Overlay::OverlayDebug),
                                 Session::get()->getOverlayManager().getOverlayMaxTextLength());
-            Session::get()->getOverlayManager().setOverlayTextUpdated(Overlay::OverlayDebug);
+            appendHudSample(m_RenderedFpsHistory, lastTwoWndStats.renderedFps);
+            appendHudSample(m_BandwidthHistory,
+                            ((lastTwoWndStats.receivedBytes * 8.0f) /
+                             SDL_max(0.001f, (SDL_GetTicks() - lastTwoWndStats.measurementStartTimestamp) / 1000.0f)) / 1000000.0f);
+            appendHudSample(m_LatencyHistory, lastTwoWndStats.lastRtt != 0 ? (float)lastTwoWndStats.lastRtt : 0.0f);
+            Session::get()->getOverlayManager().updateDebugOverlay(buildDebugOverlaySnapshot(lastTwoWndStats));
         }
 
         // Accumulate these values into the global stats
@@ -1949,6 +2028,7 @@ int FFmpegVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
 
     m_ActiveWndVideoStats.receivedFrames++;
     m_ActiveWndVideoStats.totalFrames++;
+    m_ActiveWndVideoStats.receivedBytes += du->fullLength;
 
     int requiredBufferSize = du->fullLength;
     if (du->frameType == FRAME_TYPE_IDR) {
@@ -2014,4 +2094,3 @@ void FFmpegVideoDecoder::renderFrameOnMainThread()
 {
     m_Pacer->renderOnMainThread();
 }
-

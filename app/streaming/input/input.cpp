@@ -9,7 +9,7 @@
 #include <QDir>
 #include <QGuiApplication>
 
-SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, int streamHeight)
+SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, int streamHeight, bool highFrequencyMouseMotion)
     : m_MultiController(prefs.multiController),
       m_GamepadMouse(prefs.gamepadMouse),
       m_SwapMouseButtons(prefs.swapMouseButtons),
@@ -25,6 +25,7 @@ SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, i
       m_LongPressTimer(0),
       m_StreamWidth(streamWidth),
       m_StreamHeight(streamHeight),
+      m_HighFrequencyMouseMotion(highFrequencyMouseMotion),
       m_AbsoluteMouseMode(prefs.absoluteMouseMode),
       m_AbsoluteTouchMode(prefs.absoluteTouchMode),
       m_DisabledTouchFeedback(false),
