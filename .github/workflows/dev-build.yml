@@ -389,6 +389,9 @@ jobs:
     - name: Setup MSVC
       uses: ilammy/msvc-dev-cmd@v1
     
+    - name: Install 7z
+      run: choco install 7zip -y
+    
     - name: Update version file for development build
       env:
         SEMANTIC_VERSION: ${{ needs.setup-version.outputs.version }}
@@ -503,6 +506,9 @@ jobs:
       uses: ilammy/msvc-dev-cmd@v1
       with:
         arch: amd64_arm64  # Cross-compile from x64 host to ARM64 target
+    
+    - name: Install 7z
+      run: choco install 7zip -y
         
     - name: Verify MSVC ARM64 Setup
       run: |
@@ -650,6 +656,9 @@ jobs:
         
         # Also install Visual Studio Build Tools (includes MSBuild) for compatibility
         choco install visualstudio2022buildtools --package-parameters "--includeRecommended --includeOptional --quiet --wait" -y
+        
+        # Install 7zip for creating ZIP archives
+        choco install 7zip -y
     
     - name: Setup MSVC
       uses: ilammy/msvc-dev-cmd@v1
