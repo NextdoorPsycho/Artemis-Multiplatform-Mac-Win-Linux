@@ -70,7 +70,7 @@ ClientDisplayGeometry getClientDisplayGeometry(QScreen* screen, int screenIndex)
             static_cast<int>(bounds.origin.x),
             static_cast<int>(bounds.origin.y),
             qRound((refreshRate > 0.0 ? refreshRate : screen->refreshRate()) * 1000.0),
-            CGDisplayIsMain(displayId)
+            static_cast<bool>(CGDisplayIsMain(displayId))
         };
     }
 #endif
