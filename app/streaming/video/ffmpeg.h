@@ -76,7 +76,7 @@ private:
                                IFFmpegRenderer::InitFailureReason* failureReason,
                                std::function<IFFmpegRenderer*()> createRendererFunc);
 
-    static IFFmpegRenderer* createHwAccelRenderer(const AVCodecHWConfig* hwDecodeCfg, int pass);
+    IFFmpegRenderer* createHwAccelRenderer(const AVCodecHWConfig* hwDecodeCfg, int pass);
 
     bool initializeRendererInternal(IFFmpegRenderer* renderer, PDECODER_PARAMETERS params);
 
@@ -115,6 +115,7 @@ private:
     int m_LastFrameNumber;
     int m_StreamFps;
     int m_VideoFormat;
+    bool m_DesktopStyleRelativeMouseSession;
     bool m_NeedsSpsFixup;
     bool m_TestOnly;
     SDL_Thread* m_DecoderThread;

@@ -41,6 +41,7 @@ typedef struct _DECODER_PARAMETERS {
     int width;
     int height;
     int frameRate;
+    bool desktopStyleRelativeMouseSession;
     bool enableVsync;
     bool enableFramePacing;
     bool testOnly;

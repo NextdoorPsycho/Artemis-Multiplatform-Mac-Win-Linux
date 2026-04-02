@@ -52,6 +52,14 @@ extern "C" {
 #include "ffmpeg-renderers/plvk.h"
 #endif
 
+namespace {
+bool isMouseDiagEnabled()
+{
+    const QByteArray mouseDiagEnv = qgetenv("ARTEMIS_MOUSE_DIAG").trimmed().toLower();
+    return mouseDiagEnv.isEmpty() || (mouseDiagEnv != "0" && mouseDiagEnv != "false");
+}
+}
+
 // This is gross but it allows us to use sizeof()
 #include "ffmpeg_videosamples.cpp"
 
@@ -247,6 +255,7 @@ FFmpegVideoDecoder::FFmpegVideoDecoder(bool testOnly)
       m_LastFrameNumber(0),
       m_StreamFps(0),
       m_VideoFormat(0),
+      m_DesktopStyleRelativeMouseSession(false),
       m_NeedsSpsFixup(false),
       m_TestOnly(testOnly),
       m_DecoderThread(nullptr)
@@ -1079,6 +1088,11 @@ IFFmpegRenderer* FFmpegVideoDecoder::createHwAccelRenderer(const AVCodecHWConfig
         return nullptr;
     }
 
+#ifdef Q_OS_DARWIN
+    const bool preferSampleLayerForDesktopRelative =
+            m_DesktopStyleRelativeMouseSession && qgetenv("VT_FORCE_METAL") != "1";
+#endif
+
     // First pass using our top-tier hwaccel implementations
     if (pass == 0) {
         switch (hwDecodeCfg->device_type) {
@@ -1090,6 +1104,11 @@ IFFmpegRenderer* FFmpegVideoDecoder::createHwAccelRenderer(const AVCodecHWConfig
 #endif
 #ifdef Q_OS_DARWIN
         case AV_HWDEVICE_TYPE_VIDEOTOOLBOX:
+            if (preferSampleLayerForDesktopRelative) {
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                            "Desktop relative macOS session detected; preferring AVSampleBufferDisplayLayer over Metal");
+                return VTRendererFactory::createRenderer();
+            }
             // Prefer the Metal renderer if hardware is compatible
             return VTMetalRendererFactory::createRenderer(true);
 #endif
@@ -1141,6 +1160,9 @@ IFFmpegRenderer* FFmpegVideoDecoder::createHwAccelRenderer(const AVCodecHWConfig
 #endif
 #ifdef Q_OS_DARWIN
         case AV_HWDEVICE_TYPE_VIDEOTOOLBOX:
+            if (preferSampleLayerForDesktopRelative) {
+                return VTMetalRendererFactory::createRenderer(true);
+            }
             // Use the older AVSampleBufferDisplayLayer if Metal cannot be used
             return VTRendererFactory::createRenderer();
 #endif
@@ -1355,7 +1377,7 @@ bool FFmpegVideoDecoder::tryInitializeRendererForUnknownDecoder(const AVCodec* d
                 // Initialize the hardware codec and submit a test frame if the renderer needs it
                 IFFmpegRenderer::InitFailureReason failureReason;
                 if (tryInitializeRenderer(decoder, AV_PIX_FMT_NONE, params, config, &failureReason,
-                                          [config, pass]() -> IFFmpegRenderer* { return createHwAccelRenderer(config, pass); })) {
+                                          [this, config, pass]() -> IFFmpegRenderer* { return createHwAccelRenderer(config, pass); })) {
                     return true;
                 }
                 else if (failureReason == IFFmpegRenderer::InitFailureReason::NoHardwareSupport) {
@@ -1549,7 +1571,7 @@ bool FFmpegVideoDecoder::tryInitializeHwAccelDecoder(PDECODER_PARAMETERS params,
             // Initialize the hardware codec and submit a test frame if the renderer needs it
             IFFmpegRenderer::InitFailureReason failureReason;
             if (tryInitializeRenderer(decoder, AV_PIX_FMT_NONE, params, config, &failureReason,
-                                      [config, pass]() -> IFFmpegRenderer* { return createHwAccelRenderer(config, pass); })) {
+                                      [this, config, pass]() -> IFFmpegRenderer* { return createHwAccelRenderer(config, pass); })) {
                 return true;
             }
             else if (failureReason == IFFmpegRenderer::InitFailureReason::NoHardwareSupport) {
@@ -1635,6 +1657,7 @@ bool FFmpegVideoDecoder::initialize(PDECODER_PARAMETERS params)
 {
     // Increase log level until the first frame is decoded
     av_log_set_level(AV_LOG_DEBUG);
+    m_DesktopStyleRelativeMouseSession = params->desktopStyleRelativeMouseSession;
 
     // First try decoders that the user has manually specified via environment variables.
     // These must output surfaces in one of the formats that one of our renderers supports,
@@ -1988,21 +2011,40 @@ int FFmpegVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
 
     // Flip stats windows roughly every second
     if (SDL_TICKS_PASSED(SDL_GetTicks(), m_ActiveWndVideoStats.measurementStartTimestamp + 1000)) {
-        // Update overlay stats if it's enabled
-        if (Session::get()->getOverlayManager().isOverlayEnabled(Overlay::OverlayDebug)) {
-            VIDEO_STATS lastTwoWndStats = {};
-            addVideoStats(m_LastWndVideoStats, lastTwoWndStats);
-            addVideoStats(m_ActiveWndVideoStats, lastTwoWndStats);
+        const bool mouseDiagEnabled = isMouseDiagEnabled();
 
-            stringifyVideoStats(lastTwoWndStats,
-                                Session::get()->getOverlayManager().getOverlayText(Overlay::OverlayDebug),
-                                Session::get()->getOverlayManager().getOverlayMaxTextLength());
-            appendHudSample(m_RenderedFpsHistory, lastTwoWndStats.renderedFps);
-            appendHudSample(m_BandwidthHistory,
-                            ((lastTwoWndStats.receivedBytes * 8.0f) /
-                             SDL_max(0.001f, (SDL_GetTicks() - lastTwoWndStats.measurementStartTimestamp) / 1000.0f)) / 1000000.0f);
-            appendHudSample(m_LatencyHistory, lastTwoWndStats.lastRtt != 0 ? (float)lastTwoWndStats.lastRtt : 0.0f);
-            Session::get()->getOverlayManager().updateDebugOverlay(buildDebugOverlaySnapshot(lastTwoWndStats));
+        VIDEO_STATS lastTwoWndStats = {};
+        addVideoStats(m_LastWndVideoStats, lastTwoWndStats);
+        addVideoStats(m_ActiveWndVideoStats, lastTwoWndStats);
+
+        stringifyVideoStats(lastTwoWndStats,
+                            Session::get()->getOverlayManager().getOverlayText(Overlay::OverlayDebug),
+                            Session::get()->getOverlayManager().getOverlayMaxTextLength());
+        appendHudSample(m_RenderedFpsHistory, lastTwoWndStats.renderedFps);
+        appendHudSample(m_BandwidthHistory,
+                        ((lastTwoWndStats.receivedBytes * 8.0f) /
+                         SDL_max(0.001f, (SDL_GetTicks() - lastTwoWndStats.measurementStartTimestamp) / 1000.0f)) / 1000000.0f);
+        appendHudSample(m_LatencyHistory, lastTwoWndStats.lastRtt != 0 ? (float)lastTwoWndStats.lastRtt : 0.0f);
+        Session::get()->getOverlayManager().updateDebugOverlay(buildDebugOverlaySnapshot(lastTwoWndStats));
+
+        if (mouseDiagEnabled) {
+            const auto snapshot = buildDebugOverlaySnapshot(lastTwoWndStats);
+            const QByteArray rendererName = snapshot.rendererName.toUtf8();
+
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "MouseDiag[video] renderer=%s streamFps=%.2f incomingFps=%.2f decodedFps=%.2f renderedFps=%.2f bandwidthMbps=%.2f queueDelayMs=%.2f renderTimeMs=%.2f rttMs=%.2f rttVarianceMs=%.2f networkDropPct=%.2f jitterDropPct=%.2f",
+                        rendererName.constData(),
+                        snapshot.streamFps,
+                        snapshot.incomingFps,
+                        snapshot.decodedFps,
+                        snapshot.renderedFps,
+                        snapshot.bandwidthMbps,
+                        snapshot.averageQueueDelayMs,
+                        snapshot.averageRenderTimeMs,
+                        snapshot.networkLatencyMs,
+                        snapshot.networkLatencyVarianceMs,
+                        snapshot.networkDropPercent,
+                        snapshot.jitterDropPercent);
         }
 
         // Accumulate these values into the global stats

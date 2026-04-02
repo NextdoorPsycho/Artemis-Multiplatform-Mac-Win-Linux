@@ -69,6 +69,8 @@ static QThreadPool s_LoggerThread;
 static bool s_SuppressVerboseOutput;
 static QRegularExpression k_RikeyRegex("&rikey=\\w+");
 static QRegularExpression k_RikeyIdRegex("&rikeyid=[\\d-]+");
+static QFile* s_MouseDiagFile;
+static QTextStream s_MouseDiagStream;
 #ifdef LOG_TO_FILE
 // Max log file size of 10 MB
 static const uint64_t k_MaxLogSizeBytes = 10 * 1024 * 1024;
@@ -88,6 +90,11 @@ public:
     {
         s_LoggerStream << m_Msg;
         s_LoggerStream.flush();
+
+        if (s_MouseDiagStream.device() != nullptr && m_Msg.contains("MouseDiag[")) {
+            s_MouseDiagStream << m_Msg;
+            s_MouseDiagStream.flush();
+        }
     }
 
 private:
@@ -360,6 +367,13 @@ int main(int argc, char *argv[])
         }
     }
 #endif
+
+    QDir logDir(Path::getLogDir());
+    s_MouseDiagFile = new QFile(logDir.filePath(QStringLiteral("Artemis-mouse-diag.log")));
+    if (s_MouseDiagFile->open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+        s_MouseDiagStream.setDevice(s_MouseDiagFile);
+        QTextStream(stderr) << "Mouse diagnostics log output to " << s_MouseDiagFile->fileName() << Qt::endl;
+    }
 
     // Serialize log messages on a single thread
     s_LoggerThread.setMaxThreadCount(1);

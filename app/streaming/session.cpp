@@ -317,7 +317,9 @@ void Session::clSetAdaptiveTriggers(uint16_t controllerNumber, uint8_t eventFlag
 
 bool Session::chooseDecoder(StreamingPreferences::VideoDecoderSelection vds,
                             SDL_Window* window, int videoFormat, int width, int height,
-                            int frameRate, bool enableVsync, bool enableFramePacing, bool testOnly, IVideoDecoder*& chosenDecoder)
+                            int frameRate, bool enableVsync, bool enableFramePacing,
+                            bool desktopStyleRelativeMouseSession,
+                            bool testOnly, IVideoDecoder*& chosenDecoder)
 {
     DECODER_PARAMETERS params;
 
@@ -331,6 +333,7 @@ bool Session::chooseDecoder(StreamingPreferences::VideoDecoderSelection vds,
     params.frameRate = frameRate;
     params.videoFormat = videoFormat;
     params.window = window;
+    params.desktopStyleRelativeMouseSession = desktopStyleRelativeMouseSession;
     params.enableVsync = enableVsync;
     params.enableFramePacing = enableFramePacing;
     params.testOnly = testOnly;
@@ -437,7 +440,7 @@ void Session::getDecoderInfo(SDL_Window* window,
     // Try an HEVC Main10 decoder first to see if we have HDR support
     if (chooseDecoder(StreamingPreferences::VDS_FORCE_HARDWARE,
                       window, VIDEO_FORMAT_H265_MAIN10, 1920, 1080, 60,
-                      false, false, true, decoder)) {
+                      false, false, false, true, decoder)) {
         isHardwareAccelerated = decoder->isHardwareAccelerated();
         isFullScreenOnly = decoder->isAlwaysFullScreen();
         isHdrSupported = decoder->isHdrSupported();
@@ -450,7 +453,7 @@ void Session::getDecoderInfo(SDL_Window* window,
     // Try an AV1 Main10 decoder next to see if we have HDR support
     if (chooseDecoder(StreamingPreferences::VDS_FORCE_HARDWARE,
                       window, VIDEO_FORMAT_AV1_MAIN10, 1920, 1080, 60,
-                      false, false, true, decoder)) {
+                      false, false, false, true, decoder)) {
         // If we've got a working AV1 Main 10-bit decoder, we'll enable the HDR checkbox
         // but we will still continue probing to get other attributes for HEVC or H.264
         // decoders. See the AV1 comment at the top of the function for more info.
@@ -462,10 +465,10 @@ void Session::getDecoderInfo(SDL_Window* window,
         // that supports HDR rendering with software decoded frames.
         if (chooseDecoder(StreamingPreferences::VDS_FORCE_SOFTWARE,
                           window, VIDEO_FORMAT_H265_MAIN10, 1920, 1080, 60,
-                          false, false, true, decoder) ||
+                          false, false, false, true, decoder) ||
             chooseDecoder(StreamingPreferences::VDS_FORCE_SOFTWARE,
                           window, VIDEO_FORMAT_AV1_MAIN10, 1920, 1080, 60,
-                          false, false, true, decoder)) {
+                          false, false, false, true, decoder)) {
             isHdrSupported = decoder->isHdrSupported();
             delete decoder;
         }
@@ -479,7 +482,7 @@ void Session::getDecoderInfo(SDL_Window* window,
         // This allows AV1 to work even if 10-bit/HDR is not supported
         if (chooseDecoder(StreamingPreferences::VDS_FORCE_HARDWARE,
                           window, VIDEO_FORMAT_AV1_MAIN8, 1920, 1080, 60,
-                          false, false, true, decoder)) {
+                          false, false, false, true, decoder)) {
             delete decoder;
         }
     }
@@ -487,7 +490,7 @@ void Session::getDecoderInfo(SDL_Window* window,
     // Try a regular hardware accelerated HEVC decoder now
     if (chooseDecoder(StreamingPreferences::VDS_FORCE_HARDWARE,
                       window, VIDEO_FORMAT_H265, 1920, 1080, 60,
-                      false, false, true, decoder)) {
+                      false, false, false, true, decoder)) {
         isHardwareAccelerated = decoder->isHardwareAccelerated();
         isFullScreenOnly = decoder->isAlwaysFullScreen();
         maxResolution = decoder->getDecoderMaxResolution();
@@ -500,7 +503,7 @@ void Session::getDecoderInfo(SDL_Window* window,
 #if 0 // See AV1 comment at the top of this function
     if (chooseDecoder(StreamingPreferences::VDS_FORCE_HARDWARE,
                       window, VIDEO_FORMAT_AV1_MAIN8, 1920, 1080, 60,
-                      false, false, true, decoder)) {
+                      false, false, false, true, decoder)) {
         isHardwareAccelerated = decoder->isHardwareAccelerated();
         isFullScreenOnly = decoder->isAlwaysFullScreen();
         maxResolution = decoder->getDecoderMaxResolution();
@@ -514,7 +517,7 @@ void Session::getDecoderInfo(SDL_Window* window,
     // This will fall back to software decoding, so it should always work.
     if (chooseDecoder(StreamingPreferences::VDS_AUTO,
                       window, VIDEO_FORMAT_H264, 1920, 1080, 60,
-                      false, false, true, decoder)) {
+                      false, false, false, true, decoder)) {
         isHardwareAccelerated = decoder->isHardwareAccelerated();
         isFullScreenOnly = decoder->isAlwaysFullScreen();
         maxResolution = decoder->getDecoderMaxResolution();
@@ -547,7 +550,8 @@ Session::getDecoderAvailability(SDL_Window* window,
 {
     IVideoDecoder* decoder;
 
-    if (!chooseDecoder(vds, window, videoFormat, width, height, frameRate, false, false, true, decoder)) {
+    if (!chooseDecoder(vds, window, videoFormat, width, height, frameRate,
+                       false, false, false, true, decoder)) {
         return DecoderAvailability::None;
     }
 
@@ -578,7 +582,10 @@ bool Session::populateDecoderProperties(SDL_Window* window)
                        m_StreamConfig.width,
                        m_StreamConfig.height,
                        testFps,
-                       false, false, true, decoder)) {
+                       false, false,
+                       isDesktopStyleSession() && !m_Preferences->absoluteMouseMode,
+                       true,
+                       decoder)) {
         return false;
     }
 
@@ -2246,17 +2253,21 @@ void Session::execInternal()
     m_OverlayManager.setOverlayState(Overlay::OverlayDebug, m_Preferences->showPerformanceOverlay);
 
 #ifdef Q_OS_DARWIN
-    const bool useDesktopRelativeMousePolling = isDesktopStyleSession() && !m_Preferences->absoluteMouseMode;
+    const bool desktopStyleRelativeMouseSession = isDesktopStyleSession() && !m_Preferences->absoluteMouseMode;
 #else
-    const bool useDesktopRelativeMousePolling = false;
+    const bool desktopStyleRelativeMouseSession = false;
 #endif
 
     // Hijack this thread to be the SDL main thread. We have to do this
     // because we want to suspend all Qt processing until the stream is over.
     SDL_Event event;
     for (;;) {
+        const bool useDesktopRelativeMousePolling =
+                desktopStyleRelativeMouseSession &&
+                m_InputHandler->shouldUseDesktopRelativeMousePollingOnMainThread();
+        const int eventWaitTimeoutMs = useDesktopRelativeMousePolling ? 4 : 1000;
+
 #if SDL_VERSION_ATLEAST(2, 0, 18) && !defined(STEAM_LINK)
-        if (!useDesktopRelativeMousePolling) {
         // SDL 2.0.18 has a proper wait event implementation that uses platform
         // support to block on events rather than polling on Windows, macOS, X11,
         // and Wayland. It will fall back to 1 ms polling if a joystick is
@@ -2266,14 +2277,10 @@ void Session::execInternal()
         // NB: This behavior was introduced in SDL 2.0.16, but had a few critical
         // issues that could cause indefinite timeouts, delayed joystick detection,
         // and other problems.
-        if (!SDL_WaitEventTimeout(&event, 1000)) {
-            presence.runCallbacks();
-            continue;
-        }
-        }
-        else if (!SDL_PollEvent(&event)) {
-            m_InputHandler->pollDesktopMouse();
-            SDL_Delay(1);
+        if (!SDL_WaitEventTimeout(&event, eventWaitTimeoutMs)) {
+            if (useDesktopRelativeMousePolling) {
+                m_InputHandler->pollDesktopMouse();
+            }
             presence.runCallbacks();
             continue;
         }
@@ -2524,6 +2531,7 @@ void Session::execInternal()
                                    m_ActiveVideoHeight, m_ActiveVideoFrameRate,
                                    enableVsync,
                                    enableVsync && m_Preferences->framePacing,
+                                   isDesktopStyleSession() && !m_Preferences->absoluteMouseMode,
                                    false,
                                    s_ActiveSession->m_VideoDecoder)) {
                     SDL_AtomicUnlock(&m_DecoderLock);

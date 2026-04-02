@@ -421,11 +421,13 @@ macx {
     message(VideoToolbox renderer selected)
 
     SOURCES += \
+        streaming/input/macnativerelativemouse.mm \
         streaming/video/ffmpeg-renderers/vt_base.mm \
         streaming/video/ffmpeg-renderers/vt_avsamplelayer.mm \
         streaming/video/ffmpeg-renderers/vt_metal.mm
 
     HEADERS += \
+        streaming/input/macnativerelativemouse.h \
         streaming/video/ffmpeg-renderers/vt.h
 }
 soundio {

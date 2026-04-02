@@ -4,10 +4,21 @@
 #include "settings/mappingmanager.h"
 #include "path.h"
 #include "utils.h"
+#ifdef Q_OS_DARWIN
+#include "macnativerelativemouse.h"
+#endif
 
 #include <QtGlobal>
 #include <QDir>
 #include <QGuiApplication>
+
+namespace {
+bool isMouseDiagEnabled()
+{
+    const QByteArray mouseDiagEnv = qgetenv("ARTEMIS_MOUSE_DIAG").trimmed().toLower();
+    return mouseDiagEnv.isEmpty() || (mouseDiagEnv != "0" && mouseDiagEnv != "false");
+}
+}
 
 SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, int streamHeight, bool highFrequencyMouseMotion)
     : m_MultiController(prefs.multiController),
@@ -20,15 +31,28 @@ SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, i
       m_PointerRegionLockActive(false),
       m_PointerRegionLockToggledByUser(false),
       m_FakeCaptureActive(false),
+      m_OldRelativeMouseModeWarpHint(SDL_GetHint(SDL_HINT_MOUSE_RELATIVE_MODE_WARP)),
       m_CaptureSystemKeysMode(prefs.captureSysKeysMode),
       m_MouseCursorCapturedVisibilityState(SDL_DISABLE),
       m_LongPressTimer(0),
       m_StreamWidth(streamWidth),
       m_StreamHeight(streamHeight),
       m_HighFrequencyMouseMotion(highFrequencyMouseMotion),
+      m_MouseDiagEnabled(isMouseDiagEnabled()),
+      m_MouseDiagWindowStartMs(0),
+      m_MouseDiagPollCount(0),
+      m_MouseDiagNonZeroPollCount(0),
+      m_MouseDiagAbsDeltaSum(0),
+      m_MouseDiagMaxDelta(0),
+      m_NativeRelativeCaptureActive(false),
       m_AbsoluteMouseMode(prefs.absoluteMouseMode),
       m_AbsoluteTouchMode(prefs.absoluteTouchMode),
       m_DisabledTouchFeedback(false),
+#ifdef Q_OS_DARWIN
+      m_NativeRelativeMouseMutex(SDL_CreateMutex()),
+      m_NativeRelativeMouseThread(nullptr),
+      m_NativeRelativeMouseCapture(nullptr),
+#endif
       m_LeftButtonReleaseTimer(0),
       m_RightButtonReleaseTimer(0),
       m_DragTimer(0),
@@ -203,10 +227,40 @@ SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, i
     SDL_zero(m_LastTouchDownEvent);
     SDL_zero(m_LastTouchUpEvent);
     SDL_zero(m_TouchDownEvent);
+
+#ifdef Q_OS_DARWIN
+    SDL_AtomicSet(&m_NativeRelativeMouseThreadShouldStop, 0);
+    SDL_AtomicSet(&m_NativeRelativeMouseThreadRunning, 0);
+
+    if (m_NativeRelativeMouseMutex == nullptr) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Failed to create native macOS relative mouse mutex: %s",
+                    SDL_GetError());
+    }
+#endif
 }
 
 SdlInputHandler::~SdlInputHandler()
 {
+#ifdef Q_OS_DARWIN
+    stopNativeRelativeMouseThread();
+    disableNativeRelativeMouseCapture();
+
+    if (m_HighFrequencyMouseMotion && !m_AbsoluteMouseMode) {
+        SDL_EventState(SDL_MOUSEMOTION, SDL_ENABLE);
+        SDL_FlushEvent(SDL_MOUSEMOTION);
+        SDL_SetHint(SDL_HINT_MOUSE_RELATIVE_MODE_WARP, m_OldRelativeMouseModeWarpHint.toUtf8());
+    }
+
+    delete m_NativeRelativeMouseCapture;
+    m_NativeRelativeMouseCapture = nullptr;
+
+    if (m_NativeRelativeMouseMutex != nullptr) {
+        SDL_DestroyMutex(m_NativeRelativeMouseMutex);
+        m_NativeRelativeMouseMutex = nullptr;
+    }
+#endif
+
     for (int i = 0; i < MAX_GAMEPADS; i++) {
         if (m_GamepadState[i].mouseEmulationTimer != 0) {
             Session::get()->notifyMouseEmulationMode(false);
@@ -302,7 +356,8 @@ void SdlInputHandler::notifyFocusLost()
     // This lets user to interact with our window's title bar and with the buttons in it.
     // Doing this while the window is full-screen breaks the transition out of FS
     // (desktop and exclusive), so we must check for that before releasing mouse capture.
-    if (!(SDL_GetWindowFlags(m_Window) & SDL_WINDOW_FULLSCREEN) && !m_AbsoluteMouseMode) {
+    if (m_NativeRelativeCaptureActive ||
+            (!(SDL_GetWindowFlags(m_Window) & SDL_WINDOW_FULLSCREEN) && !m_AbsoluteMouseMode)) {
         setCaptureActive(false);
     }
 
@@ -313,12 +368,123 @@ void SdlInputHandler::notifyFocusLost()
 
 bool SdlInputHandler::isCaptureActive()
 {
-    if (SDL_GetRelativeMouseMode()) {
+    if (isRelativeCaptureActive()) {
         return true;
     }
 
     // Some platforms don't support SDL_SetRelativeMouseMode
     return m_FakeCaptureActive;
+}
+
+bool SdlInputHandler::isRelativeCaptureActive() const
+{
+    return m_NativeRelativeCaptureActive || SDL_GetRelativeMouseMode();
+}
+
+bool SdlInputHandler::isNativeRelativeCaptureRequested() const
+{
+#ifdef Q_OS_DARWIN
+    return m_HighFrequencyMouseMotion && !m_AbsoluteMouseMode;
+#else
+    return false;
+#endif
+}
+
+bool SdlInputHandler::isNativeRelativeMouseThreadRunning() const
+{
+#ifdef Q_OS_DARWIN
+    return SDL_AtomicGet(const_cast<SDL_atomic_t*>(&m_NativeRelativeMouseThreadRunning)) != 0;
+#else
+    return false;
+#endif
+}
+
+bool SdlInputHandler::enableNativeRelativeMouseCapture()
+{
+#ifdef Q_OS_DARWIN
+    if (!isNativeRelativeCaptureRequested()) {
+        return false;
+    }
+
+    if (m_NativeRelativeMouseCapture == nullptr) {
+        m_NativeRelativeMouseCapture = new MacNativeRelativeMouseCapture();
+    }
+
+    if (m_NativeRelativeMouseMutex != nullptr) {
+        SDL_LockMutex(m_NativeRelativeMouseMutex);
+    }
+
+    const bool enabled = m_NativeRelativeMouseCapture->enable(m_Window);
+
+    if (m_NativeRelativeMouseMutex != nullptr) {
+        SDL_UnlockMutex(m_NativeRelativeMouseMutex);
+    }
+
+    if (!enabled) {
+        return false;
+    }
+
+    m_NativeRelativeCaptureActive = true;
+    return true;
+#else
+    return false;
+#endif
+}
+
+void SdlInputHandler::disableNativeRelativeMouseCapture()
+{
+#ifdef Q_OS_DARWIN
+    if (m_NativeRelativeMouseMutex != nullptr) {
+        SDL_LockMutex(m_NativeRelativeMouseMutex);
+    }
+
+    if (m_NativeRelativeMouseCapture != nullptr) {
+        m_NativeRelativeMouseCapture->disable();
+    }
+
+    if (m_NativeRelativeMouseMutex != nullptr) {
+        SDL_UnlockMutex(m_NativeRelativeMouseMutex);
+    }
+#endif
+    m_NativeRelativeCaptureActive = false;
+}
+
+void SdlInputHandler::consumeRelativeMouseDelta(int* xrel, int* yrel)
+{
+    if (xrel != nullptr) {
+        *xrel = 0;
+    }
+
+    if (yrel != nullptr) {
+        *yrel = 0;
+    }
+
+#ifdef Q_OS_DARWIN
+    if (m_NativeRelativeCaptureActive && m_NativeRelativeMouseCapture != nullptr) {
+        if (m_NativeRelativeMouseMutex != nullptr) {
+            SDL_LockMutex(m_NativeRelativeMouseMutex);
+        }
+        m_NativeRelativeMouseCapture->consumeDeltas(xrel, yrel);
+        if (m_NativeRelativeMouseMutex != nullptr) {
+            SDL_UnlockMutex(m_NativeRelativeMouseMutex);
+        }
+        return;
+    }
+#endif
+
+    if (SDL_GetRelativeMouseMode()) {
+        int localXrel = 0;
+        int localYrel = 0;
+        SDL_GetRelativeMouseState(&localXrel, &localYrel);
+
+        if (xrel != nullptr) {
+            *xrel = localXrel;
+        }
+
+        if (yrel != nullptr) {
+            *yrel = localYrel;
+        }
+    }
 }
 
 void SdlInputHandler::updateKeyboardGrabState()
@@ -375,14 +541,229 @@ bool SdlInputHandler::isSystemKeyCaptureActive()
     return true;
 }
 
+void SdlInputHandler::updateDesktopRelativeMouseMotionEventState()
+{
+#ifdef Q_OS_DARWIN
+    const bool suppressMouseMotionEvents = m_HighFrequencyMouseMotion &&
+                                           !m_AbsoluteMouseMode &&
+                                           !m_FakeCaptureActive &&
+                                           isRelativeCaptureActive();
+
+    SDL_EventState(SDL_MOUSEMOTION, suppressMouseMotionEvents ? SDL_IGNORE : SDL_ENABLE);
+    SDL_FlushEvent(SDL_MOUSEMOTION);
+#endif
+}
+
+bool SdlInputHandler::shouldUseDesktopRelativeMousePollingOnMainThread()
+{
+#ifdef Q_OS_DARWIN
+    if (!m_HighFrequencyMouseMotion || m_AbsoluteMouseMode || !isCaptureActive() || !isRelativeCaptureActive()) {
+        return false;
+    }
+
+    if (m_NativeRelativeCaptureActive) {
+        return !isNativeRelativeMouseThreadRunning();
+    }
+
+    return true;
+#else
+    return false;
+#endif
+}
+
+void SdlInputHandler::recordDesktopMouseDiagSample(int xrel, int yrel,
+                                                   int captureActive, int relativeMode,
+                                                   int nativeRelative, int sdlRelative,
+                                                   const char* warpHint)
+{
+#ifdef Q_OS_DARWIN
+    if (!m_MouseDiagEnabled) {
+        return;
+    }
+
+    if (m_NativeRelativeMouseMutex != nullptr) {
+        SDL_LockMutex(m_NativeRelativeMouseMutex);
+    }
+
+    const Uint32 now = SDL_GetTicks();
+    const int absDelta = SDL_abs(xrel) + SDL_abs(yrel);
+
+    if (m_MouseDiagWindowStartMs == 0) {
+        m_MouseDiagWindowStartMs = now;
+    }
+
+    m_MouseDiagPollCount++;
+    if (absDelta != 0) {
+        m_MouseDiagNonZeroPollCount++;
+        m_MouseDiagAbsDeltaSum += static_cast<Uint64>(absDelta);
+        m_MouseDiagMaxDelta = SDL_max(m_MouseDiagMaxDelta, SDL_max(SDL_abs(xrel), SDL_abs(yrel)));
+    }
+
+    const bool shouldLog = SDL_TICKS_PASSED(now, m_MouseDiagWindowStartMs + 1000);
+    const Uint64 pollCount = m_MouseDiagPollCount;
+    const Uint64 nonZeroPollCount = m_MouseDiagNonZeroPollCount;
+    const Uint64 absDeltaSum = m_MouseDiagAbsDeltaSum;
+    const int maxDelta = m_MouseDiagMaxDelta;
+    const int nativeThreadRunning = isNativeRelativeMouseThreadRunning() ? 1 : 0;
+
+    if (shouldLog) {
+        m_MouseDiagWindowStartMs = now;
+        m_MouseDiagPollCount = 0;
+        m_MouseDiagNonZeroPollCount = 0;
+        m_MouseDiagAbsDeltaSum = 0;
+        m_MouseDiagMaxDelta = 0;
+    }
+
+    if (m_NativeRelativeMouseMutex != nullptr) {
+        SDL_UnlockMutex(m_NativeRelativeMouseMutex);
+    }
+
+    if (shouldLog) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "MouseDiag[client] polls=%llu nonZeroPolls=%llu absDeltaSum=%llu maxPollDelta=%d captureActive=%d relativeMode=%d nativeRelative=%d sdlRelative=%d nativeThread=%d warpHint=%s",
+                    static_cast<unsigned long long>(pollCount),
+                    static_cast<unsigned long long>(nonZeroPollCount),
+                    static_cast<unsigned long long>(absDeltaSum),
+                    maxDelta,
+                    captureActive,
+                    relativeMode,
+                    nativeRelative,
+                    sdlRelative,
+                    nativeThreadRunning,
+                    warpHint != nullptr ? warpHint : "");
+    }
+#else
+    Q_UNUSED(xrel);
+    Q_UNUSED(yrel);
+    Q_UNUSED(captureActive);
+    Q_UNUSED(relativeMode);
+    Q_UNUSED(nativeRelative);
+    Q_UNUSED(sdlRelative);
+    Q_UNUSED(warpHint);
+#endif
+}
+
+#ifdef Q_OS_DARWIN
+int SdlInputHandler::nativeRelativeMouseThreadProcThunk(void* context)
+{
+    static_cast<SdlInputHandler*>(context)->nativeRelativeMouseThreadProc();
+    return 0;
+}
+
+bool SdlInputHandler::startNativeRelativeMouseThread()
+{
+    if (!m_NativeRelativeCaptureActive) {
+        return false;
+    }
+
+    if (m_NativeRelativeMouseMutex == nullptr) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Native macOS relative mouse thread unavailable; falling back to main-thread polling");
+        return false;
+    }
+
+    if (m_NativeRelativeMouseThread != nullptr || isNativeRelativeMouseThreadRunning()) {
+        return true;
+    }
+
+    SDL_AtomicSet(&m_NativeRelativeMouseThreadShouldStop, 0);
+    m_NativeRelativeMouseThread = SDL_CreateThread(nativeRelativeMouseThreadProcThunk,
+                                                   "NativeRelativeMouse",
+                                                   this);
+    if (m_NativeRelativeMouseThread == nullptr) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Failed to start native macOS relative mouse thread; falling back to main-thread polling: %s",
+                    SDL_GetError());
+        SDL_AtomicSet(&m_NativeRelativeMouseThreadShouldStop, 1);
+        return false;
+    }
+
+    return true;
+}
+
+void SdlInputHandler::stopNativeRelativeMouseThread()
+{
+    if (m_NativeRelativeMouseThread == nullptr && !isNativeRelativeMouseThreadRunning()) {
+        return;
+    }
+
+    SDL_AtomicSet(&m_NativeRelativeMouseThreadShouldStop, 1);
+
+    if (m_NativeRelativeMouseThread != nullptr) {
+        SDL_WaitThread(m_NativeRelativeMouseThread, nullptr);
+        m_NativeRelativeMouseThread = nullptr;
+    }
+
+    SDL_AtomicSet(&m_NativeRelativeMouseThreadRunning, 0);
+}
+
+void SdlInputHandler::nativeRelativeMouseThreadProc()
+{
+    SDL_AtomicSet(&m_NativeRelativeMouseThreadRunning, 1);
+
+    while (!SDL_AtomicGet(&m_NativeRelativeMouseThreadShouldStop)) {
+        int xrel = 0;
+        int yrel = 0;
+        bool haveNativeCapture = false;
+
+        if (m_NativeRelativeMouseMutex != nullptr) {
+            SDL_LockMutex(m_NativeRelativeMouseMutex);
+        }
+
+        haveNativeCapture = m_NativeRelativeCaptureActive && m_NativeRelativeMouseCapture != nullptr;
+        if (haveNativeCapture) {
+            m_NativeRelativeMouseCapture->consumeDeltas(&xrel, &yrel);
+        }
+
+        if (m_NativeRelativeMouseMutex != nullptr) {
+            SDL_UnlockMutex(m_NativeRelativeMouseMutex);
+        }
+
+        if (haveNativeCapture) {
+            const char* warpHint = SDL_GetHint(SDL_HINT_MOUSE_RELATIVE_MODE_WARP);
+            recordDesktopMouseDiagSample(xrel, yrel, 1, 1, 1, 0, warpHint);
+
+            if (xrel != 0 || yrel != 0) {
+                LiSendMouseMoveEvent(xrel, yrel);
+            }
+        }
+
+        SDL_Delay(1);
+    }
+
+    SDL_AtomicSet(&m_NativeRelativeMouseThreadRunning, 0);
+}
+#endif
+
 void SdlInputHandler::setCaptureActive(bool active)
 {
     if (active) {
-        // If we're in relative mode, try to activate SDL's relative mouse mode
-        if (m_AbsoluteMouseMode || SDL_SetRelativeMouseMode(SDL_TRUE) < 0) {
-            // Relative mouse mode didn't work or was disabled, so we'll just hide the cursor
-            SDL_ShowCursor(m_MouseCursorCapturedVisibilityState);
-            m_FakeCaptureActive = true;
+#ifdef Q_OS_DARWIN
+        if (enableNativeRelativeMouseCapture()) {
+            SDL_ShowCursor(SDL_DISABLE);
+            if (!startNativeRelativeMouseThread()) {
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                            "Native macOS relative mouse capture is using main-thread polling fallback");
+            }
+        }
+        else if (isNativeRelativeCaptureRequested()) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Native macOS relative capture unavailable; falling back to SDL relative mode");
+            SDL_SetHint(SDL_HINT_MOUSE_RELATIVE_MODE_WARP, "1");
+        }
+#endif
+
+        if (!m_NativeRelativeCaptureActive) {
+            // If we're in relative mode, try to activate SDL's relative mouse mode
+            if (m_AbsoluteMouseMode || SDL_SetRelativeMouseMode(SDL_TRUE) < 0) {
+                // Relative mouse mode didn't work or was disabled, so we'll just hide the cursor
+                SDL_ShowCursor(m_MouseCursorCapturedVisibilityState);
+                m_FakeCaptureActive = true;
+            }
+            else if (!m_AbsoluteMouseMode) {
+                // Relative mouse capture should never leave the local cursor visible.
+                SDL_ShowCursor(SDL_DISABLE);
+            }
         }
 
         // Synchronize the client and host cursor when activating absolute capture
@@ -413,15 +794,61 @@ void SdlInputHandler::setCaptureActive(bool active)
 
     }
     else {
+        const bool hadNativeRelativeCapture = m_NativeRelativeCaptureActive;
+#ifdef Q_OS_DARWIN
+        stopNativeRelativeMouseThread();
+#endif
+        disableNativeRelativeMouseCapture();
+
         if (m_FakeCaptureActive) {
             // Display the cursor again
             SDL_ShowCursor(SDL_ENABLE);
             m_FakeCaptureActive = false;
         }
-        else {
+        else if (SDL_GetRelativeMouseMode()) {
             SDL_SetRelativeMouseMode(SDL_FALSE);
+
+            if (!m_AbsoluteMouseMode) {
+                SDL_ShowCursor(SDL_ENABLE);
+            }
         }
+        else if (!m_AbsoluteMouseMode && !hadNativeRelativeCapture) {
+            SDL_ShowCursor(SDL_ENABLE);
+        }
+
+#ifdef Q_OS_DARWIN
+        if (m_HighFrequencyMouseMotion && !m_AbsoluteMouseMode && !hadNativeRelativeCapture) {
+            SDL_SetHint(SDL_HINT_MOUSE_RELATIVE_MODE_WARP, m_OldRelativeMouseModeWarpHint.toUtf8());
+        }
+#endif
     }
+
+    updateDesktopRelativeMouseMotionEventState();
+
+#ifdef Q_OS_DARWIN
+    if (m_MouseDiagEnabled && m_HighFrequencyMouseMotion && !m_AbsoluteMouseMode) {
+        const char* warpHint = SDL_GetHint(SDL_HINT_MOUSE_RELATIVE_MODE_WARP);
+        const bool suppressMouseMotionEvents = SDL_EventState(SDL_MOUSEMOTION, SDL_QUERY) == SDL_IGNORE;
+
+        m_MouseDiagWindowStartMs = SDL_GetTicks();
+        m_MouseDiagPollCount = 0;
+        m_MouseDiagNonZeroPollCount = 0;
+        m_MouseDiagAbsDeltaSum = 0;
+        m_MouseDiagMaxDelta = 0;
+
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "MouseDiag[client] capture=%s captureActive=%d fakeCapture=%d relativeMode=%d nativeRelative=%d sdlRelative=%d nativeThread=%d suppressMotion=%d warpHint=%s",
+                    active ? "enabled" : "disabled",
+                    isCaptureActive() ? 1 : 0,
+                    m_FakeCaptureActive ? 1 : 0,
+                    isRelativeCaptureActive() ? 1 : 0,
+                    m_NativeRelativeCaptureActive ? 1 : 0,
+                    SDL_GetRelativeMouseMode() ? 1 : 0,
+                    isNativeRelativeMouseThreadRunning() ? 1 : 0,
+                    suppressMouseMotionEvents ? 1 : 0,
+                    warpHint != nullptr ? warpHint : "");
+    }
+#endif
 
     // Update mouse pointer region constraints
     updatePointerRegionLock();

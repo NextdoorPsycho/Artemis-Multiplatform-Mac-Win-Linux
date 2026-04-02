@@ -224,7 +224,7 @@ public:
             if (m_MetalLayer.displaySyncEnabled) {
                 // Pace ourselves by waiting if too many frames are pending presentation
                 SDL_LockMutex(m_PresentationMutex);
-                if (m_PendingPresentationCount >= 2) {
+                if (m_PendingPresentationCount > 2) {
                     if (SDL_CondWaitTimeout(m_PresentationCond, m_PresentationMutex, 100) == SDL_MUTEX_TIMEDOUT) {
                         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                                     "Presentation wait timed out after 100 ms");
@@ -647,6 +647,10 @@ public:
         // Flip to the newly rendered buffer
         [commandBuffer presentDrawable:m_NextDrawable];
         [commandBuffer commit];
+
+        // Keep drawable turnover bounded so nextDrawable() doesn't silently
+        // become the long pole under input/compositor pressure.
+        [commandBuffer waitUntilCompleted];
 
         [m_NextDrawable release];
         m_NextDrawable = nullptr;

@@ -5,6 +5,10 @@
 
 #include "SDL_compat.h"
 
+#ifdef Q_OS_DARWIN
+class MacNativeRelativeMouseCapture;
+#endif
+
 struct GamepadState {
     SDL_GameController* controller;
     SDL_JoystickID jsId;
@@ -144,6 +148,8 @@ public:
 
     void pollDesktopMouse();
 
+    bool shouldUseDesktopRelativeMousePollingOnMainThread();
+
     void setCaptureActive(bool active);
 
     bool isMouseInVideoRegion(int mouseX, int mouseY, int windowWidth = -1, int windowHeight = -1);
@@ -186,6 +192,36 @@ private:
 
     void handleRelativeFingerEvent(SDL_TouchFingerEvent* event);
 
+    void updateDesktopRelativeMouseMotionEventState();
+
+    bool isRelativeCaptureActive() const;
+
+    bool isNativeRelativeCaptureRequested() const;
+
+    bool isNativeRelativeMouseThreadRunning() const;
+
+    bool enableNativeRelativeMouseCapture();
+
+    void disableNativeRelativeMouseCapture();
+
+    void consumeRelativeMouseDelta(int* xrel, int* yrel);
+
+    void recordDesktopMouseDiagSample(int xrel, int yrel,
+                                      int captureActive, int relativeMode,
+                                      int nativeRelative, int sdlRelative,
+                                      const char* warpHint);
+
+#ifdef Q_OS_DARWIN
+    bool startNativeRelativeMouseThread();
+
+    void stopNativeRelativeMouseThread();
+
+    void nativeRelativeMouseThreadProc();
+
+    static
+    int nativeRelativeMouseThreadProcThunk(void* context);
+#endif
+
     void performSpecialKeyCombo(KeyCombo combo);
 
     static
@@ -221,6 +257,7 @@ private:
     bool m_FakeCaptureActive;
     QString m_OldIgnoreDevices;
     QString m_OldIgnoreDevicesExcept;
+    QString m_OldRelativeMouseModeWarpHint;
     QStringList m_IgnoreDeviceGuids;
     StreamingPreferences::CaptureSysKeysMode m_CaptureSystemKeysMode;
     int m_MouseCursorCapturedVisibilityState;
@@ -238,9 +275,24 @@ private:
     int m_StreamWidth;
     int m_StreamHeight;
     bool m_HighFrequencyMouseMotion;
+    bool m_MouseDiagEnabled;
+    Uint32 m_MouseDiagWindowStartMs;
+    Uint64 m_MouseDiagPollCount;
+    Uint64 m_MouseDiagNonZeroPollCount;
+    Uint64 m_MouseDiagAbsDeltaSum;
+    int m_MouseDiagMaxDelta;
+    bool m_NativeRelativeCaptureActive;
     bool m_AbsoluteMouseMode;
     bool m_AbsoluteTouchMode;
     bool m_DisabledTouchFeedback;
+
+#ifdef Q_OS_DARWIN
+    SDL_mutex* m_NativeRelativeMouseMutex;
+    SDL_Thread* m_NativeRelativeMouseThread;
+    SDL_atomic_t m_NativeRelativeMouseThreadShouldStop;
+    SDL_atomic_t m_NativeRelativeMouseThreadRunning;
+    MacNativeRelativeMouseCapture* m_NativeRelativeMouseCapture;
+#endif
 
     SDL_TouchFingerEvent m_TouchDownEvent[MAX_FINGERS];
     SDL_TimerID m_LeftButtonReleaseTimer;

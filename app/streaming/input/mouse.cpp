@@ -79,7 +79,7 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
         return;
     }
 #ifdef Q_OS_DARWIN
-    else if (m_HighFrequencyMouseMotion && !m_AbsoluteMouseMode && SDL_GetRelativeMouseMode()) {
+    else if (m_HighFrequencyMouseMotion && !m_AbsoluteMouseMode && isRelativeCaptureActive()) {
         // On macOS, desktop-style sessions use polled relative mouse state to avoid
         // sparse hover-motion delivery from SDL when no mouse button is held.
         return;
@@ -166,13 +166,28 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
 
 void SdlInputHandler::pollDesktopMouse()
 {
-    if (!m_HighFrequencyMouseMotion || m_AbsoluteMouseMode || !isCaptureActive() || !SDL_GetRelativeMouseMode()) {
+    if (!m_HighFrequencyMouseMotion || m_AbsoluteMouseMode || !isCaptureActive() || !isRelativeCaptureActive()) {
+        return;
+    }
+
+    if (!shouldUseDesktopRelativeMousePollingOnMainThread()) {
         return;
     }
 
     int xrel = 0;
     int yrel = 0;
-    SDL_GetRelativeMouseState(&xrel, &yrel);
+    consumeRelativeMouseDelta(&xrel, &yrel);
+
+#ifdef Q_OS_DARWIN
+    const char* warpHint = SDL_GetHint(SDL_HINT_MOUSE_RELATIVE_MODE_WARP);
+    recordDesktopMouseDiagSample(xrel, yrel,
+                                 isCaptureActive() ? 1 : 0,
+                                 isRelativeCaptureActive() ? 1 : 0,
+                                 m_NativeRelativeCaptureActive ? 1 : 0,
+                                 SDL_GetRelativeMouseMode() ? 1 : 0,
+                                 warpHint);
+#endif
+
     if (xrel == 0 && yrel == 0) {
         return;
     }
@@ -287,7 +302,7 @@ bool SdlInputHandler::isMouseInVideoRegion(int mouseX, int mouseY, int windowWid
 void SdlInputHandler::updatePointerRegionLock()
 {
     // Pointer region lock is irrelevant in relative mouse mode
-    if (SDL_GetRelativeMouseMode()) {
+    if (isRelativeCaptureActive()) {
         return;
     }
 
