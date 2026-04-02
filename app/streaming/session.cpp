@@ -535,7 +535,7 @@ int Session::getActualFpsForDecoderTest() const
     int fps = m_StreamConfig.fps;
     
     // If fractional refresh rate is enabled, the fps might be multiplied by 1000 for Apollo
-    if (m_Preferences->enableFractionalRefreshRate && fps > 1000) {
+    if ((m_Preferences->enableFractionalRefreshRate || m_Preferences->soleDisplay) && fps > 1000) {
         // Convert back from Apollo's internal representation (fps * 1000) to actual fps
         fps = fps / 1000;
     }
@@ -656,17 +656,24 @@ Session::Session(NvComputer* computer, NvApp& app, StreamingPreferences *prefere
     m_ServerCommandManager(new ServerCommandManager()),
     m_ClipboardManager(ClipboardManager::instance())
 {
+    if (m_Preferences->soleDisplay) {
+        m_IsFullScreen = true;
+    }
 }
 
 bool Session::initialize()
 {
+    const auto requestedWindowMode = m_Preferences->soleDisplay ?
+        m_Preferences->recommendedFullScreenMode :
+        m_Preferences->windowMode;
+
 #ifdef Q_OS_DARWIN
     if (qEnvironmentVariableIntValue("I_WANT_BUGGY_FULLSCREEN") == 0) {
         // If we have a notch and the user specified one of the two native display modes
         // (notched or notchless), override the fullscreen mode to ensure it works as expected.
         // - SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES=0 will place the video underneath the notch
         // - SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES=1 will place the video below the notch
-        bool shouldUseFullScreenSpaces = m_Preferences->windowMode != StreamingPreferences::WM_FULLSCREEN;
+        bool shouldUseFullScreenSpaces = requestedWindowMode != StreamingPreferences::WM_FULLSCREEN;
         SDL_DisplayMode desktopMode;
         SDL_Rect safeArea;
         for (int displayIndex = 0; StreamUtils::getNativeDesktopMode(displayIndex, &desktopMode, &safeArea); displayIndex++) {
@@ -710,20 +717,41 @@ bool Session::initialize()
     }
 
     LiInitializeStreamConfiguration(&m_StreamConfig);
-    m_StreamConfig.width = m_Preferences->width;
-    m_StreamConfig.height = m_Preferences->height;
 
-    // Artemis Apollo integration: Apply resolution scaling if enabled
-    if (m_Preferences->enableResolutionScaling && m_Preferences->resolutionScaleFactor != 100) {
-        // Apply scaling factor to resolution
-        m_StreamConfig.width = (m_StreamConfig.width * m_Preferences->resolutionScaleFactor) / 100;
-        m_StreamConfig.height = (m_StreamConfig.height * m_Preferences->resolutionScaleFactor) / 100;
-        
+    QScreen* targetScreen = m_QtWindow != nullptr ? m_QtWindow->screen() : QGuiApplication::primaryScreen();
+    const bool useSoleDisplayMode = m_Preferences->soleDisplay && targetScreen != nullptr;
+
+    if (useSoleDisplayMode) {
+        const QRect screenGeometry = targetScreen->geometry();
+        const qreal screenScaleFactor = targetScreen->devicePixelRatio();
+        m_StreamConfig.width = qRound(screenGeometry.width() * screenScaleFactor);
+        m_StreamConfig.height = qRound(screenGeometry.height() * screenScaleFactor);
+
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                    "Applied resolution scaling factor %d%%: %dx%d -> %dx%d",
-                    m_Preferences->resolutionScaleFactor,
-                    m_Preferences->width, m_Preferences->height,
-                    m_StreamConfig.width, m_StreamConfig.height);
+                    "Sole-display mode matched client screen: %dx%d on %s (logical=%dx%d, scale=%.2f)",
+                    m_StreamConfig.width,
+                    m_StreamConfig.height,
+                    qPrintable(targetScreen->name()),
+                    screenGeometry.width(),
+                    screenGeometry.height(),
+                    screenScaleFactor);
+    }
+    else {
+        m_StreamConfig.width = m_Preferences->width;
+        m_StreamConfig.height = m_Preferences->height;
+
+        // Artemis Apollo integration: Apply resolution scaling if enabled
+        if (m_Preferences->enableResolutionScaling && m_Preferences->resolutionScaleFactor != 100) {
+            // Apply scaling factor to resolution
+            m_StreamConfig.width = (m_StreamConfig.width * m_Preferences->resolutionScaleFactor) / 100;
+            m_StreamConfig.height = (m_StreamConfig.height * m_Preferences->resolutionScaleFactor) / 100;
+            
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Applied resolution scaling factor %d%%: %dx%d -> %dx%d",
+                        m_Preferences->resolutionScaleFactor,
+                        m_Preferences->width, m_Preferences->height,
+                        m_StreamConfig.width, m_StreamConfig.height);
+        }
     }
 
     int x, y, width, height;
@@ -753,20 +781,39 @@ bool Session::initialize()
     LiInitializeVideoCallbacks(&m_VideoCallbacks);
     m_VideoCallbacks.setup = drSetup;
 
-    m_StreamConfig.fps = m_Preferences->fps;
     m_StreamConfig.bitrate = m_Preferences->bitrateKbps;
 
-    // Artemis Apollo integration: Apply fractional refresh rate if enabled
-    if (m_Preferences->enableFractionalRefreshRate) {
-        // Convert fractional refresh rate to integer (multiply by 1000 for precision)
-        // This matches Apollo's internal representation: fps * 1000
-        int fractionalFps = (int)(m_Preferences->customRefreshRate * 1000);
-        m_StreamConfig.fps = fractionalFps;
-        
+    if (useSoleDisplayMode) {
+        const qreal screenRefreshRate = targetScreen->refreshRate();
+        const int roundedRefreshRate = qRound(screenRefreshRate);
+
+        if (screenRefreshRate > 1.0 && qAbs(screenRefreshRate - roundedRefreshRate) >= 0.01) {
+            m_StreamConfig.fps = qRound(screenRefreshRate * 1000.0);
+        }
+        else {
+            m_StreamConfig.fps = screenRefreshRate > 1.0 ? roundedRefreshRate : m_Preferences->fps;
+        }
+
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                    "Applied fractional refresh rate: %.2f Hz (internal: %d)",
-                    m_Preferences->customRefreshRate,
-                    fractionalFps);
+                    "Sole-display mode matched client refresh rate: %.2f Hz (stream fps=%d)",
+                    screenRefreshRate,
+                    m_StreamConfig.fps);
+    }
+    else {
+        m_StreamConfig.fps = m_Preferences->fps;
+
+        // Artemis Apollo integration: Apply fractional refresh rate if enabled
+        if (m_Preferences->enableFractionalRefreshRate) {
+            // Convert fractional refresh rate to integer (multiply by 1000 for precision)
+            // This matches Apollo's internal representation: fps * 1000
+            int fractionalFps = (int)(m_Preferences->customRefreshRate * 1000);
+            m_StreamConfig.fps = fractionalFps;
+            
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Applied fractional refresh rate: %.2f Hz (internal: %d)",
+                        m_Preferences->customRefreshRate,
+                        fractionalFps);
+        }
     }
 
 #ifndef STEAM_LINK
@@ -978,7 +1025,7 @@ bool Session::initialize()
         m_SupportedVideoFormats.deprioritizeByMask(~VIDEO_FORMAT_MASK_10BIT);
     }
 
-    switch (m_Preferences->windowMode)
+    switch (requestedWindowMode)
     {
     default:
     case StreamingPreferences::WM_FULLSCREEN_DESKTOP:

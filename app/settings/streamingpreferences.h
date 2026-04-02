@@ -158,6 +158,7 @@ public:
     
     // Artemis client-side streaming enhancements
     Q_PROPERTY(bool useVirtualDisplay MEMBER useVirtualDisplay NOTIFY useVirtualDisplayChanged)
+    Q_PROPERTY(bool soleDisplay MEMBER soleDisplay NOTIFY soleDisplayChanged)
     Q_PROPERTY(bool enableFractionalRefreshRate MEMBER enableFractionalRefreshRate NOTIFY enableFractionalRefreshRateChanged)
     Q_PROPERTY(double customRefreshRate MEMBER customRefreshRate NOTIFY customRefreshRateChanged)
     Q_PROPERTY(bool enableResolutionScaling MEMBER enableResolutionScaling NOTIFY enableResolutionScalingChanged)
@@ -208,6 +209,7 @@ public:
     
     // Artemis client-side streaming enhancements
     bool useVirtualDisplay;
+    bool soleDisplay;
     bool enableFractionalRefreshRate;
     double customRefreshRate;
     bool enableResolutionScaling;
@@ -253,6 +255,7 @@ signals:
     
     // Artemis client-side streaming enhancement signals
     void useVirtualDisplayChanged();
+    void soleDisplayChanged();
     void enableFractionalRefreshRateChanged();
     void customRefreshRateChanged();
     void enableResolutionScalingChanged();

@@ -226,10 +226,15 @@ NvHTTP::startApp(QString verb,
     //            QString::number(streamConfig->height) + "x";
     
     // Handle fractional refresh rate for Apollo servers
-    if (prefs->enableFractionalRefreshRate) {
+    const bool useSoleDisplayFractionalRefreshRate = prefs->soleDisplay && streamConfig->fps > 1000;
+    if (useSoleDisplayFractionalRefreshRate || (!prefs->soleDisplay && prefs->enableFractionalRefreshRate)) {
+        const double requestedRefreshRate = useSoleDisplayFractionalRefreshRate ?
+            (static_cast<double>(streamConfig->fps) / 1000.0) :
+            prefs->customRefreshRate;
+
         // Send fractional rate directly (Apollo will handle the conversion)
-        baseParams += QString::number(prefs->customRefreshRate, 'f', 2);
-        qInfo() << "Using fractional refresh rate:" << prefs->customRefreshRate << "Hz";
+        baseParams += QString::number(requestedRefreshRate, 'f', 2);
+        qInfo() << "Using fractional refresh rate:" << requestedRefreshRate << "Hz";
     } else {
         // Using an FPS value over 60 causes SOPS to default to 720p60,
         // so force it to 0 to ensure the correct resolution is set. We
@@ -266,12 +271,17 @@ NvHTTP::startApp(QString verb,
                     "&gcpersist="+QString::number(persistGameControllersOnDisconnect ? 1 : 0);
     
     // Add Apollo-specific parameters
-    if (prefs->useVirtualDisplay) {
+    if (prefs->useVirtualDisplay || prefs->soleDisplay) {
         allParams += "&virtualDisplay=1";
         qInfo() << "Requesting virtual display from Apollo server";
     }
+
+    if (prefs->soleDisplay) {
+        allParams += "&soleDisplay=1";
+        qInfo() << "Requesting sole-display mode from Apollo server";
+    }
     
-    if (prefs->enableResolutionScaling && prefs->resolutionScaleFactor != 100) {
+    if (!prefs->soleDisplay && prefs->enableResolutionScaling && prefs->resolutionScaleFactor != 100) {
         allParams += "&scaleFactor=" + QString::number(prefs->resolutionScaleFactor);
         qInfo() << "Requesting resolution scaling:" << prefs->resolutionScaleFactor << "%";
     }

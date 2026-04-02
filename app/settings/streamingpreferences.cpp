@@ -55,6 +55,7 @@
 
 // Artemis client-side streaming enhancements
 #define SER_VIRTUALDISPLAY "virtualdisplay"
+#define SER_SOLEDISPLAY "soledisplay"
 #define SER_FRACTIONALREFRESHRATE "fractionalrefreshrate"
 #define SER_CUSTOMREFRESHRATE "customrefreshrate"
 #define SER_RESOLUTIONSCALING "resolutionscaling"
@@ -178,6 +179,7 @@ void StreamingPreferences::reload()
 
     // Artemis client-side streaming enhancements
     useVirtualDisplay = settings.value(SER_VIRTUALDISPLAY, false).toBool();
+    soleDisplay = settings.value(SER_SOLEDISPLAY, false).toBool();
     enableFractionalRefreshRate = settings.value(SER_FRACTIONALREFRESHRATE, false).toBool();
     customRefreshRate = settings.value(SER_CUSTOMREFRESHRATE, 59.94).toDouble();
     enableResolutionScaling = settings.value(SER_RESOLUTIONSCALING, false).toBool();
@@ -376,6 +378,7 @@ void StreamingPreferences::save()
     
     // Artemis client-side streaming enhancements
     settings.setValue(SER_VIRTUALDISPLAY, useVirtualDisplay);
+    settings.setValue(SER_SOLEDISPLAY, soleDisplay);
     settings.setValue(SER_FRACTIONALREFRESHRATE, enableFractionalRefreshRate);
     settings.setValue(SER_CUSTOMREFRESHRATE, customRefreshRate);
     settings.setValue(SER_RESOLUTIONSCALING, enableResolutionScaling);

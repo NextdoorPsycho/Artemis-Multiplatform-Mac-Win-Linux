@@ -1105,7 +1105,7 @@ Flickable {
 
                     id: windowModeComboBox
                     visible: SystemProperties.hasDesktopEnvironment
-                    enabled: !SystemProperties.rendererAlwaysFullScreen
+                    enabled: !SystemProperties.rendererAlwaysFullScreen && !StreamingPreferences.soleDisplay
                     hoverEnabled: true
                     textRole: "text"
                     onActivated: {
@@ -1205,6 +1205,7 @@ Flickable {
                     text: qsTr("Use Virtual Display")
                     font.pointSize: 12
                     checked: StreamingPreferences.useVirtualDisplay
+                    enabled: !StreamingPreferences.soleDisplay
                     onCheckedChanged: {
                         StreamingPreferences.useVirtualDisplay = checked
                     }
@@ -1215,6 +1216,26 @@ Flickable {
                     ToolTip.text: qsTr("Creates a virtual display on the Apollo server for streaming. Requires Apollo server - not available with Sunshine/GeForce Experience.")
                 }
 
+                Ui.UiToggle {
+                    id: soleDisplayCheck
+                    width: parent.width
+                    hoverEnabled: true
+                    text: qsTr("Sole-Display")
+                    font.pointSize: 12
+                    checked: StreamingPreferences.soleDisplay
+                    onCheckedChanged: {
+                        StreamingPreferences.soleDisplay = checked
+                        if (checked) {
+                            StreamingPreferences.useVirtualDisplay = true
+                        }
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 5000
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Creates a single virtual display on the Apollo server, disables the host's other displays for the session, forces the client into fullscreen, matches the host resolution and refresh rate to the connected client display, and restores everything on disconnect. Not compatible with All Display Streaming.")
+                }
+
                 // Resolution Scaling
                 Ui.UiToggle {
                     id: resolutionScalingCheck
@@ -1223,6 +1244,7 @@ Flickable {
                     text: qsTr("Enable Resolution Scaling")
                     font.pointSize: 12
                     checked: StreamingPreferences.enableResolutionScaling
+                    enabled: !StreamingPreferences.soleDisplay
                     onCheckedChanged: {
                         StreamingPreferences.enableResolutionScaling = checked
                     }
@@ -1235,7 +1257,7 @@ Flickable {
 
                 Row {
                     spacing: 10
-                    visible: StreamingPreferences.enableResolutionScaling
+                    visible: StreamingPreferences.enableResolutionScaling && !StreamingPreferences.soleDisplay
                     width: parent.width
 
                     Label {
