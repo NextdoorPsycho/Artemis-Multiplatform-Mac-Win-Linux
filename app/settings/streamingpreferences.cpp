@@ -10,6 +10,10 @@
 #include <QScreen>
 #include <QtMath>
 
+#ifdef Q_OS_DARWIN
+#include <ApplicationServices/ApplicationServices.h>
+#endif
+
 #include <QtDebug>
 
 #define SER_STREAMSETTINGS "streamsettings"
@@ -69,6 +73,61 @@
 
 static StreamingPreferences* s_GlobalPrefs;
 static QReadWriteLock s_GlobalPrefsLock;
+
+namespace {
+struct ClientDisplayGeometry {
+    int width;
+    int height;
+    int x;
+    int y;
+    int fps;
+    bool primary;
+};
+
+ClientDisplayGeometry getClientDisplayGeometry(QScreen* screen, int screenIndex)
+{
+#ifdef Q_OS_DARWIN
+    constexpr uint32_t kMaxDisplays = 32;
+    CGDirectDisplayID displayIds[kMaxDisplays];
+    uint32_t displayCount = 0;
+
+    if (CGGetActiveDisplayList(kMaxDisplays, displayIds, &displayCount) == kCGErrorSuccess &&
+        screenIndex >= 0 &&
+        static_cast<uint32_t>(screenIndex) < displayCount) {
+        const auto displayId = displayIds[screenIndex];
+        const CGRect bounds = CGDisplayBounds(displayId);
+        const auto width = static_cast<int>(CGDisplayPixelsWide(displayId));
+        const auto height = static_cast<int>(CGDisplayPixelsHigh(displayId));
+
+        double refreshRate = 0.0;
+        if (auto mode = CGDisplayCopyDisplayMode(displayId)) {
+            refreshRate = CGDisplayModeGetRefreshRate(mode);
+            CFRelease(mode);
+        }
+
+        return ClientDisplayGeometry {
+            width,
+            height,
+            static_cast<int>(bounds.origin.x),
+            static_cast<int>(bounds.origin.y),
+            qRound(refreshRate > 0.0 ? refreshRate : screen->refreshRate()),
+            CGDisplayIsMain(displayId)
+        };
+    }
+#endif
+
+    const QRect geometry = screen->geometry();
+    const qreal scaleFactor = screen->devicePixelRatio();
+    return ClientDisplayGeometry {
+        qRound(geometry.width() * scaleFactor),
+        qRound(geometry.height() * scaleFactor),
+        qRound(geometry.x() * scaleFactor),
+        qRound(geometry.y() * scaleFactor),
+        qRound(screen->refreshRate()),
+        screen == QGuiApplication::primaryScreen()
+    };
+}
+}
 
 StreamingPreferences::StreamingPreferences(QQmlEngine *qmlEngine)
     : m_QmlEngine(qmlEngine)
@@ -397,24 +456,23 @@ QVariantList StreamingPreferences::availableClientDisplays() const
 {
     QVariantList displays;
     const QList<QScreen*> screens = QGuiApplication::screens();
-    QScreen* primaryScreen = QGuiApplication::primaryScreen();
 
-    for (QScreen* screen : screens) {
+    for (int screenIndex = 0; screenIndex < screens.count(); ++screenIndex) {
+        QScreen* screen = screens.at(screenIndex);
         if (screen == nullptr) {
             continue;
         }
 
-        const QRect geometry = screen->geometry();
-        const qreal scaleFactor = screen->devicePixelRatio();
+        const auto displayGeometry = getClientDisplayGeometry(screen, screenIndex);
         QVariantMap display;
         display["id"] = screen->name();
         display["name"] = screen->name();
-        display["width"] = qRound(geometry.width() * scaleFactor);
-        display["height"] = qRound(geometry.height() * scaleFactor);
-        display["fps"] = qRound(screen->refreshRate());
-        display["x"] = qRound(geometry.x() * scaleFactor);
-        display["y"] = qRound(geometry.y() * scaleFactor);
-        display["primary"] = (screen == primaryScreen);
+        display["width"] = displayGeometry.width;
+        display["height"] = displayGeometry.height;
+        display["fps"] = displayGeometry.fps;
+        display["x"] = displayGeometry.x;
+        display["y"] = displayGeometry.y;
+        display["primary"] = displayGeometry.primary;
         display["selected"] = selectedClientDisplayIds.isEmpty() || selectedClientDisplayIds.contains(screen->name());
         displays.append(display);
     }

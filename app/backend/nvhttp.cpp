@@ -23,6 +23,10 @@
 #include <QGuiApplication>
 #include <QScreen>
 
+#ifdef Q_OS_DARWIN
+#include <ApplicationServices/ApplicationServices.h>
+#endif
+
 #define FAST_FAIL_TIMEOUT_MS 2000
 #define REQUEST_TIMEOUT_MS 5000
 #define LAUNCH_TIMEOUT_MS 120000
@@ -30,14 +34,67 @@
 #define QUIT_TIMEOUT_MS 30000
 
 namespace {
+struct ClientDisplayGeometry {
+    int width;
+    int height;
+    int x;
+    int y;
+    int fps;
+    bool primary;
+};
+
+ClientDisplayGeometry getClientDisplayGeometry(QScreen* screen, int screenIndex)
+{
+#ifdef Q_OS_DARWIN
+    constexpr uint32_t kMaxDisplays = 32;
+    CGDirectDisplayID displayIds[kMaxDisplays];
+    uint32_t displayCount = 0;
+
+    if (CGGetActiveDisplayList(kMaxDisplays, displayIds, &displayCount) == kCGErrorSuccess &&
+        screenIndex >= 0 &&
+        static_cast<uint32_t>(screenIndex) < displayCount) {
+        const auto displayId = displayIds[screenIndex];
+        const CGRect bounds = CGDisplayBounds(displayId);
+        const auto width = static_cast<int>(CGDisplayPixelsWide(displayId));
+        const auto height = static_cast<int>(CGDisplayPixelsHigh(displayId));
+
+        double refreshRate = 0.0;
+        if (auto mode = CGDisplayCopyDisplayMode(displayId)) {
+            refreshRate = CGDisplayModeGetRefreshRate(mode);
+            CFRelease(mode);
+        }
+
+        return ClientDisplayGeometry {
+            width,
+            height,
+            static_cast<int>(bounds.origin.x),
+            static_cast<int>(bounds.origin.y),
+            qRound((refreshRate > 0.0 ? refreshRate : screen->refreshRate()) * 1000.0),
+            CGDisplayIsMain(displayId)
+        };
+    }
+#endif
+
+    const QRect geometry = screen->geometry();
+    const qreal scaleFactor = screen->devicePixelRatio();
+    return ClientDisplayGeometry {
+        qRound(geometry.width() * scaleFactor),
+        qRound(geometry.height() * scaleFactor),
+        qRound(geometry.x() * scaleFactor),
+        qRound(geometry.y() * scaleFactor),
+        qRound(screen->refreshRate() * 1000.0),
+        screen == QGuiApplication::primaryScreen()
+    };
+}
+
 QByteArray serializeClientDisplays(const QStringList& selectedDisplayIds)
 {
     QJsonArray displays;
     const QList<QScreen*> screens = QGuiApplication::screens();
-    QScreen* primaryScreen = QGuiApplication::primaryScreen();
     bool skippedForSelection = false;
 
-    for (QScreen* screen : screens) {
+    for (int screenIndex = 0; screenIndex < screens.count(); ++screenIndex) {
+        QScreen* screen = screens.at(screenIndex);
         if (screen == nullptr) {
             continue;
         }
@@ -47,41 +104,36 @@ QByteArray serializeClientDisplays(const QStringList& selectedDisplayIds)
             continue;
         }
 
-        const QRect geometry = screen->geometry();
-        const qreal scaleFactor = screen->devicePixelRatio();
-        const int width = qRound(geometry.width() * scaleFactor);
-        const int height = qRound(geometry.height() * scaleFactor);
-        const int fps = qRound(screen->refreshRate() * 1000.0);
+        const auto displayGeometry = getClientDisplayGeometry(screen, screenIndex);
 
         QJsonObject display;
         display["id"] = screen->name();
-        display["width"] = width;
-        display["height"] = height;
-        display["fps"] = fps > 0 ? fps : 60000;
-        display["x"] = qRound(geometry.x() * scaleFactor);
-        display["y"] = qRound(geometry.y() * scaleFactor);
-        display["primary"] = (screen == primaryScreen);
+        display["width"] = displayGeometry.width;
+        display["height"] = displayGeometry.height;
+        display["fps"] = displayGeometry.fps > 0 ? displayGeometry.fps : 60000;
+        display["x"] = displayGeometry.x;
+        display["y"] = displayGeometry.y;
+        display["primary"] = displayGeometry.primary;
         displays.append(display);
     }
 
     if (displays.isEmpty() && skippedForSelection) {
-        for (QScreen* screen : screens) {
+        for (int screenIndex = 0; screenIndex < screens.count(); ++screenIndex) {
+            QScreen* screen = screens.at(screenIndex);
             if (screen == nullptr) {
                 continue;
             }
 
-            const QRect geometry = screen->geometry();
-            const qreal scaleFactor = screen->devicePixelRatio();
-            const int fps = qRound(screen->refreshRate() * 1000.0);
+            const auto displayGeometry = getClientDisplayGeometry(screen, screenIndex);
 
             QJsonObject display;
             display["id"] = screen->name();
-            display["width"] = qRound(geometry.width() * scaleFactor);
-            display["height"] = qRound(geometry.height() * scaleFactor);
-            display["fps"] = fps > 0 ? fps : 60000;
-            display["x"] = qRound(geometry.x() * scaleFactor);
-            display["y"] = qRound(geometry.y() * scaleFactor);
-            display["primary"] = (screen == primaryScreen);
+            display["width"] = displayGeometry.width;
+            display["height"] = displayGeometry.height;
+            display["fps"] = displayGeometry.fps > 0 ? displayGeometry.fps : 60000;
+            display["x"] = displayGeometry.x;
+            display["y"] = displayGeometry.y;
+            display["primary"] = displayGeometry.primary;
             displays.append(display);
         }
     }
