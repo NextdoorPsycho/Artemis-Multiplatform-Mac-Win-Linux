@@ -31,6 +31,63 @@
 
 @end
 
+namespace {
+
+void releaseOverlayImageData(void*, const void* data, size_t)
+{
+    SDL_free((void*)data);
+}
+
+NSImage* createOverlayImageFromSurface(SDL_Surface* surface)
+{
+    if (surface == nullptr || SDL_MUSTLOCK(surface) || surface->format->format != SDL_PIXELFORMAT_ARGB8888) {
+        return nil;
+    }
+
+    const size_t dataSize = (size_t)surface->pitch * (size_t)surface->h;
+    void* copiedPixels = SDL_malloc(dataSize);
+    if (copiedPixels == nullptr) {
+        return nil;
+    }
+
+    SDL_memcpy(copiedPixels, surface->pixels, dataSize);
+
+    CGDataProviderRef provider = CGDataProviderCreateWithData(nullptr,
+                                                              copiedPixels,
+                                                              dataSize,
+                                                              releaseOverlayImageData);
+    if (provider == nullptr) {
+        SDL_free(copiedPixels);
+        return nil;
+    }
+
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    CGImageRef cgImage = CGImageCreate(surface->w,
+                                       surface->h,
+                                       8,
+                                       32,
+                                       surface->pitch,
+                                       colorSpace,
+                                       kCGImageAlphaFirst | kCGBitmapByteOrder32Little,
+                                       provider,
+                                       nullptr,
+                                       false,
+                                       kCGRenderingIntentDefault);
+
+    CGColorSpaceRelease(colorSpace);
+    CGDataProviderRelease(provider);
+
+    if (cgImage == nullptr) {
+        return nil;
+    }
+
+    NSImage* image = [[NSImage alloc] initWithCGImage:cgImage size:NSMakeSize(surface->w, surface->h)];
+    CGImageRelease(cgImage);
+    return image;
+}
+
+}
+
 class VTRenderer : public VTBaseRenderer
 {
 public:
@@ -49,6 +106,7 @@ public:
           m_VsyncPassed(nullptr)
     {
         SDL_zero(m_OverlayTextFields);
+        SDL_zero(m_OverlayImageViews);
         for (int i = 0; i < Overlay::OverlayMax; i++) {
             m_OverlayUpdateBlocks[i] = dispatch_block_create(DISPATCH_BLOCK_DETACHED, ^{
                 updateOverlayOnMainThread((Overlay::OverlayType)i);
@@ -102,6 +160,10 @@ public:
             if (m_OverlayTextFields[i] != nullptr) {
                 [m_OverlayTextFields[i] removeFromSuperview];
                 [m_OverlayTextFields[i] release];
+            }
+            if (m_OverlayImageViews[i] != nullptr) {
+                [m_OverlayImageViews[i] removeFromSuperview];
+                [m_OverlayImageViews[i] release];
             }
         }
 
@@ -487,6 +549,50 @@ public:
 
     void updateOverlayOnMainThread(Overlay::OverlayType type)
     { @autoreleasepool {
+        if (type == Overlay::OverlayDebug) {
+            SDL_Surface* newSurface = Session::get()->getOverlayManager().getUpdatedOverlaySurface(type);
+            bool overlayEnabled = Session::get()->getOverlayManager().isOverlayEnabled(type);
+            if (newSurface == nullptr && overlayEnabled) {
+                return;
+            }
+
+            if (m_OverlayTextFields[type] != nullptr) {
+                [m_OverlayTextFields[type] setHidden:YES];
+            }
+
+            if (m_OverlayImageViews[type] == nullptr) {
+                m_OverlayImageViews[type] = [[NSImageView alloc] initWithFrame:NSZeroRect];
+                [m_OverlayImageViews[type] setHidden:YES];
+                [m_OverlayImageViews[type] setImageAlignment:NSImageAlignTopLeft];
+                [m_OverlayImageViews[type] setImageFrameStyle:NSImageFrameNone];
+                [m_OverlayImageViews[type] setAutoresizingMask:NSViewMinYMargin | NSViewMaxXMargin];
+                [m_StreamView addSubview:m_OverlayImageViews[type]];
+            }
+
+            if (!overlayEnabled) {
+                [m_OverlayImageViews[type] setImage:nil];
+                [m_OverlayImageViews[type] setHidden:YES];
+                SDL_FreeSurface(newSurface);
+                return;
+            }
+
+            NSImage* image = createOverlayImageFromSurface(newSurface);
+            if (image != nil) {
+                const NSRect bounds = m_StreamView.bounds;
+                const NSRect frame = NSMakeRect(0.0,
+                                                SDL_max(0.0, bounds.size.height - newSurface->h),
+                                                newSurface->w,
+                                                newSurface->h);
+                [m_OverlayImageViews[type] setFrame:frame];
+                [m_OverlayImageViews[type] setImage:image];
+                [m_OverlayImageViews[type] setHidden:NO];
+                [image release];
+            }
+
+            SDL_FreeSurface(newSurface);
+            return;
+        }
+
         // Lazy initialization for the overlay
         if (m_OverlayTextFields[type] == nullptr) {
             m_OverlayTextFields[type] = [[NSTextField alloc] initWithFrame:m_StreamView.bounds];
@@ -578,6 +684,7 @@ private:
     NSView* m_StreamView;
     dispatch_block_t m_OverlayUpdateBlocks[Overlay::OverlayMax];
     NSTextField* m_OverlayTextFields[Overlay::OverlayMax];
+    NSImageView* m_OverlayImageViews[Overlay::OverlayMax];
     CVDisplayLinkRef m_DisplayLink;
     int m_LastColorSpace;
     CGColorSpaceRef m_ColorSpace;
