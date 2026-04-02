@@ -204,11 +204,16 @@ private:
 
     void disableNativeRelativeMouseCapture();
 
+    void applyNativeRelativeLocalCursorHide();
+
+    void releaseNativeRelativeLocalCursorHide();
+
     void consumeRelativeMouseDelta(int* xrel, int* yrel);
 
     void recordDesktopMouseDiagSample(int xrel, int yrel,
                                       int captureActive, int relativeMode,
                                       int nativeRelative, int sdlRelative,
+                                      int rawRelative,
                                       const char* warpHint);
 
 #ifdef Q_OS_DARWIN
@@ -291,6 +296,9 @@ private:
     SDL_Thread* m_NativeRelativeMouseThread;
     SDL_atomic_t m_NativeRelativeMouseThreadShouldStop;
     SDL_atomic_t m_NativeRelativeMouseThreadRunning;
+    bool m_NativeRelativeQtCursorHidden;
+    bool m_NativeRelativeSdlCursorHidden;
+    int m_NativeRelativePreviousSdlCursorVisibility;
     MacNativeRelativeMouseCapture* m_NativeRelativeMouseCapture;
 #endif
 

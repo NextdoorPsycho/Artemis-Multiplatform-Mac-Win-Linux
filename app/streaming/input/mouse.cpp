@@ -185,6 +185,7 @@ void SdlInputHandler::pollDesktopMouse()
                                  isRelativeCaptureActive() ? 1 : 0,
                                  m_NativeRelativeCaptureActive ? 1 : 0,
                                  SDL_GetRelativeMouseMode() ? 1 : 0,
+                                 0,
                                  warpHint);
 #endif
 

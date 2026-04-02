@@ -9,8 +9,13 @@
 #endif
 
 #include <QtGlobal>
+#include <QCursor>
 #include <QDir>
 #include <QGuiApplication>
+
+#ifdef Q_OS_DARWIN
+extern "C" int LiSendMouseMoveEventRaw(int deltaX, int deltaY);
+#endif
 
 namespace {
 bool isMouseDiagEnabled()
@@ -51,6 +56,9 @@ SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, i
 #ifdef Q_OS_DARWIN
       m_NativeRelativeMouseMutex(SDL_CreateMutex()),
       m_NativeRelativeMouseThread(nullptr),
+      m_NativeRelativeQtCursorHidden(false),
+      m_NativeRelativeSdlCursorHidden(false),
+      m_NativeRelativePreviousSdlCursorVisibility(SDL_ENABLE),
       m_NativeRelativeMouseCapture(nullptr),
 #endif
       m_LeftButtonReleaseTimer(0),
@@ -245,6 +253,7 @@ SdlInputHandler::~SdlInputHandler()
 #ifdef Q_OS_DARWIN
     stopNativeRelativeMouseThread();
     disableNativeRelativeMouseCapture();
+    releaseNativeRelativeLocalCursorHide();
 
     if (m_HighFrequencyMouseMotion && !m_AbsoluteMouseMode) {
         SDL_EventState(SDL_MOUSEMOTION, SDL_ENABLE);
@@ -449,6 +458,37 @@ void SdlInputHandler::disableNativeRelativeMouseCapture()
     m_NativeRelativeCaptureActive = false;
 }
 
+void SdlInputHandler::applyNativeRelativeLocalCursorHide()
+{
+#ifdef Q_OS_DARWIN
+    if (!m_NativeRelativeSdlCursorHidden) {
+        m_NativeRelativePreviousSdlCursorVisibility = SDL_ShowCursor(SDL_QUERY);
+        SDL_ShowCursor(SDL_DISABLE);
+        m_NativeRelativeSdlCursorHidden = true;
+    }
+
+    if (!m_NativeRelativeQtCursorHidden) {
+        QGuiApplication::setOverrideCursor(QCursor(Qt::BlankCursor));
+        m_NativeRelativeQtCursorHidden = true;
+    }
+#endif
+}
+
+void SdlInputHandler::releaseNativeRelativeLocalCursorHide()
+{
+#ifdef Q_OS_DARWIN
+    if (m_NativeRelativeQtCursorHidden) {
+        QGuiApplication::restoreOverrideCursor();
+        m_NativeRelativeQtCursorHidden = false;
+    }
+
+    if (m_NativeRelativeSdlCursorHidden) {
+        SDL_ShowCursor(m_NativeRelativePreviousSdlCursorVisibility);
+        m_NativeRelativeSdlCursorHidden = false;
+    }
+#endif
+}
+
 void SdlInputHandler::consumeRelativeMouseDelta(int* xrel, int* yrel)
 {
     if (xrel != nullptr) {
@@ -574,6 +614,7 @@ bool SdlInputHandler::shouldUseDesktopRelativeMousePollingOnMainThread()
 void SdlInputHandler::recordDesktopMouseDiagSample(int xrel, int yrel,
                                                    int captureActive, int relativeMode,
                                                    int nativeRelative, int sdlRelative,
+                                                   int rawRelative,
                                                    const char* warpHint)
 {
 #ifdef Q_OS_DARWIN
@@ -620,7 +661,7 @@ void SdlInputHandler::recordDesktopMouseDiagSample(int xrel, int yrel,
 
     if (shouldLog) {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                    "MouseDiag[client] polls=%llu nonZeroPolls=%llu absDeltaSum=%llu maxPollDelta=%d captureActive=%d relativeMode=%d nativeRelative=%d sdlRelative=%d nativeThread=%d warpHint=%s",
+                    "MouseDiag[client] polls=%llu nonZeroPolls=%llu absDeltaSum=%llu maxPollDelta=%d captureActive=%d relativeMode=%d nativeRelative=%d sdlRelative=%d rawRelative=%d nativeThread=%d warpHint=%s",
                     static_cast<unsigned long long>(pollCount),
                     static_cast<unsigned long long>(nonZeroPollCount),
                     static_cast<unsigned long long>(absDeltaSum),
@@ -629,6 +670,7 @@ void SdlInputHandler::recordDesktopMouseDiagSample(int xrel, int yrel,
                     relativeMode,
                     nativeRelative,
                     sdlRelative,
+                    rawRelative,
                     nativeThreadRunning,
                     warpHint != nullptr ? warpHint : "");
     }
@@ -639,6 +681,7 @@ void SdlInputHandler::recordDesktopMouseDiagSample(int xrel, int yrel,
     Q_UNUSED(relativeMode);
     Q_UNUSED(nativeRelative);
     Q_UNUSED(sdlRelative);
+    Q_UNUSED(rawRelative);
     Q_UNUSED(warpHint);
 #endif
 }
@@ -721,10 +764,10 @@ void SdlInputHandler::nativeRelativeMouseThreadProc()
 
         if (haveNativeCapture) {
             const char* warpHint = SDL_GetHint(SDL_HINT_MOUSE_RELATIVE_MODE_WARP);
-            recordDesktopMouseDiagSample(xrel, yrel, 1, 1, 1, 0, warpHint);
+            recordDesktopMouseDiagSample(xrel, yrel, 1, 1, 1, 0, 1, warpHint);
 
             if (xrel != 0 || yrel != 0) {
-                LiSendMouseMoveEvent(xrel, yrel);
+                LiSendMouseMoveEventRaw(xrel, yrel);
             }
         }
 
@@ -740,7 +783,7 @@ void SdlInputHandler::setCaptureActive(bool active)
     if (active) {
 #ifdef Q_OS_DARWIN
         if (enableNativeRelativeMouseCapture()) {
-            SDL_ShowCursor(SDL_DISABLE);
+            applyNativeRelativeLocalCursorHide();
             if (!startNativeRelativeMouseThread()) {
                 SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                             "Native macOS relative mouse capture is using main-thread polling fallback");
@@ -799,6 +842,9 @@ void SdlInputHandler::setCaptureActive(bool active)
         stopNativeRelativeMouseThread();
 #endif
         disableNativeRelativeMouseCapture();
+        if (hadNativeRelativeCapture) {
+            releaseNativeRelativeLocalCursorHide();
+        }
 
         if (m_FakeCaptureActive) {
             // Display the cursor again
@@ -837,13 +883,14 @@ void SdlInputHandler::setCaptureActive(bool active)
         m_MouseDiagMaxDelta = 0;
 
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                    "MouseDiag[client] capture=%s captureActive=%d fakeCapture=%d relativeMode=%d nativeRelative=%d sdlRelative=%d nativeThread=%d suppressMotion=%d warpHint=%s",
+                    "MouseDiag[client] capture=%s captureActive=%d fakeCapture=%d relativeMode=%d nativeRelative=%d sdlRelative=%d rawRelative=%d nativeThread=%d suppressMotion=%d warpHint=%s",
                     active ? "enabled" : "disabled",
                     isCaptureActive() ? 1 : 0,
                     m_FakeCaptureActive ? 1 : 0,
                     isRelativeCaptureActive() ? 1 : 0,
                     m_NativeRelativeCaptureActive ? 1 : 0,
                     SDL_GetRelativeMouseMode() ? 1 : 0,
+                    m_NativeRelativeCaptureActive ? 1 : 0,
                     isNativeRelativeMouseThreadRunning() ? 1 : 0,
                     suppressMouseMotionEvents ? 1 : 0,
                     warpHint != nullptr ? warpHint : "");
