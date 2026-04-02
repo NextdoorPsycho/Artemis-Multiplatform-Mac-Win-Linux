@@ -2,6 +2,8 @@
 
 #include <QObject>
 #include <QRect>
+#include <QStringList>
+#include <QVariantList>
 #include <QQmlEngine>
 
 class StreamingPreferences : public QObject
@@ -159,12 +161,18 @@ public:
     // Artemis client-side streaming enhancements
     Q_PROPERTY(bool useVirtualDisplay MEMBER useVirtualDisplay NOTIFY useVirtualDisplayChanged)
     Q_PROPERTY(bool soleDisplay MEMBER soleDisplay NOTIFY soleDisplayChanged)
+    Q_PROPERTY(bool allDisplayStreaming MEMBER allDisplayStreaming NOTIFY allDisplayStreamingChanged)
+    Q_PROPERTY(QStringList selectedClientDisplayIds MEMBER selectedClientDisplayIds NOTIFY selectedClientDisplayIdsChanged)
     Q_PROPERTY(bool enableFractionalRefreshRate MEMBER enableFractionalRefreshRate NOTIFY enableFractionalRefreshRateChanged)
     Q_PROPERTY(double customRefreshRate MEMBER customRefreshRate NOTIFY customRefreshRateChanged)
     Q_PROPERTY(bool enableResolutionScaling MEMBER enableResolutionScaling NOTIFY enableResolutionScalingChanged)
     Q_PROPERTY(int resolutionScaleFactor MEMBER resolutionScaleFactor NOTIFY resolutionScaleFactorChanged);
 
     Q_INVOKABLE bool retranslate();
+    Q_INVOKABLE QVariantList availableClientDisplays() const;
+    Q_INVOKABLE QString selectedClientDisplaysSummary() const;
+    Q_INVOKABLE bool hasSelectedClientDisplays() const;
+    Q_INVOKABLE void selectAllClientDisplays();
 
     // Directly accessible members for preferences
     int width;
@@ -210,6 +218,8 @@ public:
     // Artemis client-side streaming enhancements
     bool useVirtualDisplay;
     bool soleDisplay;
+    bool allDisplayStreaming;
+    QStringList selectedClientDisplayIds;
     bool enableFractionalRefreshRate;
     double customRefreshRate;
     bool enableResolutionScaling;
@@ -256,6 +266,8 @@ signals:
     // Artemis client-side streaming enhancement signals
     void useVirtualDisplayChanged();
     void soleDisplayChanged();
+    void allDisplayStreamingChanged();
+    void selectedClientDisplayIdsChanged();
     void enableFractionalRefreshRateChanged();
     void customRefreshRateChanged();
     void enableResolutionScalingChanged();

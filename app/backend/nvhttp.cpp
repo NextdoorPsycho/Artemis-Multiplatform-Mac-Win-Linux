@@ -14,15 +14,81 @@
 #include <QSslKey>
 #include <QImageReader>
 #include <QtEndian>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QNetworkProxy>
 #include <QSysInfo>
 #include <QRandomGenerator>
+#include <QGuiApplication>
+#include <QScreen>
 
 #define FAST_FAIL_TIMEOUT_MS 2000
 #define REQUEST_TIMEOUT_MS 5000
 #define LAUNCH_TIMEOUT_MS 120000
 #define RESUME_TIMEOUT_MS 30000
 #define QUIT_TIMEOUT_MS 30000
+
+namespace {
+QByteArray serializeClientDisplays(const QStringList& selectedDisplayIds)
+{
+    QJsonArray displays;
+    const QList<QScreen*> screens = QGuiApplication::screens();
+    QScreen* primaryScreen = QGuiApplication::primaryScreen();
+    bool skippedForSelection = false;
+
+    for (QScreen* screen : screens) {
+        if (screen == nullptr) {
+            continue;
+        }
+
+        if (!selectedDisplayIds.isEmpty() && !selectedDisplayIds.contains(screen->name())) {
+            skippedForSelection = true;
+            continue;
+        }
+
+        const QRect geometry = screen->geometry();
+        const qreal scaleFactor = screen->devicePixelRatio();
+        const int width = qRound(geometry.width() * scaleFactor);
+        const int height = qRound(geometry.height() * scaleFactor);
+        const int fps = qRound(screen->refreshRate() * 1000.0);
+
+        QJsonObject display;
+        display["id"] = screen->name();
+        display["width"] = width;
+        display["height"] = height;
+        display["fps"] = fps > 0 ? fps : 60000;
+        display["x"] = qRound(geometry.x() * scaleFactor);
+        display["y"] = qRound(geometry.y() * scaleFactor);
+        display["primary"] = (screen == primaryScreen);
+        displays.append(display);
+    }
+
+    if (displays.isEmpty() && skippedForSelection) {
+        for (QScreen* screen : screens) {
+            if (screen == nullptr) {
+                continue;
+            }
+
+            const QRect geometry = screen->geometry();
+            const qreal scaleFactor = screen->devicePixelRatio();
+            const int fps = qRound(screen->refreshRate() * 1000.0);
+
+            QJsonObject display;
+            display["id"] = screen->name();
+            display["width"] = qRound(geometry.width() * scaleFactor);
+            display["height"] = qRound(geometry.height() * scaleFactor);
+            display["fps"] = fps > 0 ? fps : 60000;
+            display["x"] = qRound(geometry.x() * scaleFactor);
+            display["y"] = qRound(geometry.y() * scaleFactor);
+            display["primary"] = (screen == primaryScreen);
+            displays.append(display);
+        }
+    }
+
+    return QJsonDocument(displays).toJson(QJsonDocument::Compact);
+}
+}
 
 NvHTTP::NvHTTP(NvAddress address, uint16_t httpsPort, QSslCertificate serverCert) :
     m_ServerCert(serverCert)
@@ -271,7 +337,7 @@ NvHTTP::startApp(QString verb,
                     "&gcpersist="+QString::number(persistGameControllersOnDisconnect ? 1 : 0);
     
     // Add Apollo-specific parameters
-    if (prefs->useVirtualDisplay || prefs->soleDisplay) {
+    if (prefs->useVirtualDisplay || prefs->soleDisplay || prefs->allDisplayStreaming) {
         allParams += "&virtualDisplay=1";
         qInfo() << "Requesting virtual display from Apollo server";
     }
@@ -280,8 +346,15 @@ NvHTTP::startApp(QString verb,
         allParams += "&soleDisplay=1";
         qInfo() << "Requesting sole-display mode from Apollo server";
     }
+
+    if (prefs->allDisplayStreaming && !prefs->soleDisplay) {
+        const QByteArray clientDisplays = serializeClientDisplays(prefs->selectedClientDisplayIds);
+        allParams += "&multiDisplay=1";
+        allParams += "&clientDisplays=" + QString::fromUtf8(clientDisplays.toPercentEncoding());
+        qInfo() << "Requesting multi-display streaming with" << clientDisplays;
+    }
     
-    if (!prefs->soleDisplay && prefs->enableResolutionScaling && prefs->resolutionScaleFactor != 100) {
+    if (!prefs->soleDisplay && !prefs->allDisplayStreaming && prefs->enableResolutionScaling && prefs->resolutionScaleFactor != 100) {
         allParams += "&scaleFactor=" + QString::number(prefs->resolutionScaleFactor);
         qInfo() << "Requesting resolution scaling:" << prefs->resolutionScaleFactor << "%";
     }

@@ -236,6 +236,10 @@ NvComputer::NvComputer(NvHTTP& http, QString serverInfo)
     QString permissionStr = NvHTTP::getXmlString(serverInfo, "Permission");
     this->hasPermissionSystem = !permissionStr.isEmpty();
     this->isApolloHost = !this->apolloVersion.isEmpty() || this->hasPermissionSystem;
+    const QString multiDisplayCapableStr = NvHTTP::getXmlString(serverInfo, "MultiDisplayCapable").trimmed().toLower();
+    const QString multiDisplayDriverReadyStr = NvHTTP::getXmlString(serverInfo, "MultiDisplayDriverReady").trimmed().toLower();
+    this->multiDisplayCapable = multiDisplayCapableStr == "1" || multiDisplayCapableStr == "true";
+    this->multiDisplayDriverReady = multiDisplayDriverReadyStr == "1" || multiDisplayDriverReadyStr == "true";
 
     if (!permissionStr.isEmpty()) {
         bool ok;
@@ -604,6 +608,8 @@ bool NvComputer::update(const NvComputer& that)
     ASSIGN_IF_CHANGED(gpuModel);
     ASSIGN_IF_CHANGED(isApolloHost);
     ASSIGN_IF_CHANGED(hasPermissionSystem);
+    ASSIGN_IF_CHANGED(multiDisplayCapable);
+    ASSIGN_IF_CHANGED(multiDisplayDriverReady);
     ASSIGN_IF_CHANGED(apolloVersion);
     ASSIGN_IF_CHANGED_AND_NONNULL(serverCert);
     ASSIGN_IF_CHANGED_AND_NONEMPTY(displayModes);

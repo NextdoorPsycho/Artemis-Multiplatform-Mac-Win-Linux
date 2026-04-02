@@ -4,8 +4,10 @@
 #include <QSettings>
 #include <QTranslator>
 #include <QCoreApplication>
+#include <QGuiApplication>
 #include <QLocale>
 #include <QReadWriteLock>
+#include <QScreen>
 #include <QtMath>
 
 #include <QtDebug>
@@ -56,6 +58,8 @@
 // Artemis client-side streaming enhancements
 #define SER_VIRTUALDISPLAY "virtualdisplay"
 #define SER_SOLEDISPLAY "soledisplay"
+#define SER_ALLDISPLAYSTREAMING "alldisplaystreaming"
+#define SER_SELECTEDCLIENTDISPLAYS "selectedclientdisplayids"
 #define SER_FRACTIONALREFRESHRATE "fractionalrefreshrate"
 #define SER_CUSTOMREFRESHRATE "customrefreshrate"
 #define SER_RESOLUTIONSCALING "resolutionscaling"
@@ -180,6 +184,8 @@ void StreamingPreferences::reload()
     // Artemis client-side streaming enhancements
     useVirtualDisplay = settings.value(SER_VIRTUALDISPLAY, false).toBool();
     soleDisplay = settings.value(SER_SOLEDISPLAY, false).toBool();
+    allDisplayStreaming = settings.value(SER_ALLDISPLAYSTREAMING, false).toBool();
+    selectedClientDisplayIds = settings.value(SER_SELECTEDCLIENTDISPLAYS).toStringList();
     enableFractionalRefreshRate = settings.value(SER_FRACTIONALREFRESHRATE, false).toBool();
     customRefreshRate = settings.value(SER_CUSTOMREFRESHRATE, 59.94).toDouble();
     enableResolutionScaling = settings.value(SER_RESOLUTIONSCALING, false).toBool();
@@ -379,10 +385,94 @@ void StreamingPreferences::save()
     // Artemis client-side streaming enhancements
     settings.setValue(SER_VIRTUALDISPLAY, useVirtualDisplay);
     settings.setValue(SER_SOLEDISPLAY, soleDisplay);
+    settings.setValue(SER_ALLDISPLAYSTREAMING, allDisplayStreaming);
+    settings.setValue(SER_SELECTEDCLIENTDISPLAYS, selectedClientDisplayIds);
     settings.setValue(SER_FRACTIONALREFRESHRATE, enableFractionalRefreshRate);
     settings.setValue(SER_CUSTOMREFRESHRATE, customRefreshRate);
     settings.setValue(SER_RESOLUTIONSCALING, enableResolutionScaling);
     settings.setValue(SER_RESOLUTIONSCALEFACTOR, resolutionScaleFactor);
+}
+
+QVariantList StreamingPreferences::availableClientDisplays() const
+{
+    QVariantList displays;
+    const QList<QScreen*> screens = QGuiApplication::screens();
+    QScreen* primaryScreen = QGuiApplication::primaryScreen();
+
+    for (QScreen* screen : screens) {
+        if (screen == nullptr) {
+            continue;
+        }
+
+        const QRect geometry = screen->geometry();
+        const qreal scaleFactor = screen->devicePixelRatio();
+        QVariantMap display;
+        display["id"] = screen->name();
+        display["name"] = screen->name();
+        display["width"] = qRound(geometry.width() * scaleFactor);
+        display["height"] = qRound(geometry.height() * scaleFactor);
+        display["fps"] = qRound(screen->refreshRate());
+        display["x"] = qRound(geometry.x() * scaleFactor);
+        display["y"] = qRound(geometry.y() * scaleFactor);
+        display["primary"] = (screen == primaryScreen);
+        display["selected"] = selectedClientDisplayIds.isEmpty() || selectedClientDisplayIds.contains(screen->name());
+        displays.append(display);
+    }
+
+    return displays;
+}
+
+QString StreamingPreferences::selectedClientDisplaysSummary() const
+{
+    const QVariantList displays = availableClientDisplays();
+    int selectedCount = 0;
+    int totalCount = displays.count();
+
+    for (const QVariant& displayVariant : displays) {
+        if (displayVariant.toMap().value("selected").toBool()) {
+            selectedCount++;
+        }
+    }
+
+    if (totalCount == 0) {
+        return tr("No client displays detected");
+    }
+
+    if (selectedClientDisplayIds.isEmpty()) {
+        return tr("All %1 client displays").arg(totalCount);
+    }
+
+    if (selectedCount == 0) {
+        return tr("No current client displays selected");
+    }
+
+    if (selectedCount == totalCount) {
+        return tr("All %1 client displays").arg(totalCount);
+    }
+
+    return tr("%1 of %2 client displays").arg(selectedCount).arg(totalCount);
+}
+
+bool StreamingPreferences::hasSelectedClientDisplays() const
+{
+    const QVariantList displays = availableClientDisplays();
+    for (const QVariant& displayVariant : displays) {
+        if (displayVariant.toMap().value("selected").toBool()) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void StreamingPreferences::selectAllClientDisplays()
+{
+    if (selectedClientDisplayIds.isEmpty()) {
+        return;
+    }
+
+    selectedClientDisplayIds.clear();
+    emit selectedClientDisplayIdsChanged();
 }
 
 int StreamingPreferences::getDefaultBitrate(int width, int height, int fps, bool yuv444)

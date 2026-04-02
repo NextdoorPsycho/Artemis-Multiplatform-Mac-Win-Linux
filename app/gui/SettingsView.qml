@@ -76,6 +76,11 @@ Flickable {
         syncBitrateControls()
     }
 
+    function openClientDisplayDialog() {
+        clientDisplayDialog.loadFromPreferences()
+        clientDisplayDialog.open()
+    }
+
     boundsBehavior: Flickable.OvershootBounds
 
     contentWidth: settingsColumn1.width > settingsColumn2.width ? settingsColumn1.width : settingsColumn2.width
@@ -1227,13 +1232,73 @@ Flickable {
                         StreamingPreferences.soleDisplay = checked
                         if (checked) {
                             StreamingPreferences.useVirtualDisplay = true
+                            StreamingPreferences.allDisplayStreaming = false
                         }
                     }
 
                     ToolTip.delay: 1000
                     ToolTip.timeout: 5000
                     ToolTip.visible: hovered
-                    ToolTip.text: qsTr("Creates a single virtual display on the Apollo server, disables the host's other displays for the session, forces the client into fullscreen, matches the host resolution and refresh rate to the connected client display, and restores everything on disconnect. Not compatible with All Display Streaming.")
+                    ToolTip.text: qsTr("Creates a single virtual display on the Apollo server, disables the host's other displays for the session, forces the client into fullscreen, matches the host resolution and refresh rate to the connected client display, and restores everything on disconnect. Not compatible with Multi-Display Streaming.")
+                }
+
+                Ui.UiToggle {
+                    id: allDisplayStreamingCheck
+                    width: parent.width
+                    hoverEnabled: true
+                    text: qsTr("Multi-Display Streaming")
+                    font.pointSize: 12
+                    checked: StreamingPreferences.allDisplayStreaming
+                    enabled: !StreamingPreferences.soleDisplay
+                    onCheckedChanged: {
+                        StreamingPreferences.allDisplayStreaming = checked
+                        if (checked) {
+                            StreamingPreferences.useVirtualDisplay = true
+                        }
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 5000
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Creates and arranges virtual displays on the Apollo host to match the selected Artemis client displays, including their resolutions and layout. This is a Windows-first Apollo feature and is not compatible with Sole-Display.")
+                }
+
+                Row {
+                    width: parent.width
+                    spacing: 8
+                    visible: StreamingPreferences.allDisplayStreaming
+
+                    Ui.UiButton {
+                        id: clientDisplaySelectionButton
+                        text: qsTr("Choose displays")
+                        onClicked: settingsPage.openClientDisplayDialog()
+                    }
+
+                    Ui.UiButton {
+                        text: qsTr("Use all")
+                        tone: "muted"
+                        onClicked: StreamingPreferences.selectAllClientDisplays()
+                    }
+                }
+
+                Label {
+                    width: parent.width
+                    visible: StreamingPreferences.allDisplayStreaming
+                    text: qsTr("Selected layout: %1").arg(StreamingPreferences.selectedClientDisplaysSummary())
+                    font.pointSize: 9
+                    wrapMode: Text.Wrap
+                    color: !StreamingPreferences.hasSelectedClientDisplays() && StreamingPreferences.selectedClientDisplayIds.length > 0
+                           ? "#f59e0b"
+                           : settingsPage.mutedTextColor
+                }
+
+                Label {
+                    width: parent.width
+                    visible: StreamingPreferences.allDisplayStreaming && !StreamingPreferences.hasSelectedClientDisplays() && StreamingPreferences.selectedClientDisplayIds.length > 0
+                    text: qsTr("Your saved display selection no longer matches the current client displays. Artemis will fall back to all detected displays until you reselect them.")
+                    font.pointSize: 9
+                    wrapMode: Text.Wrap
+                    color: "#f59e0b"
                 }
 
                 // Resolution Scaling
@@ -1244,7 +1309,7 @@ Flickable {
                     text: qsTr("Enable Resolution Scaling")
                     font.pointSize: 12
                     checked: StreamingPreferences.enableResolutionScaling
-                    enabled: !StreamingPreferences.soleDisplay
+                    enabled: !StreamingPreferences.soleDisplay && !StreamingPreferences.allDisplayStreaming
                     onCheckedChanged: {
                         StreamingPreferences.enableResolutionScaling = checked
                     }
@@ -1255,9 +1320,124 @@ Flickable {
                     ToolTip.text: qsTr("Scales the stream resolution. Useful for improving performance on lower-end devices or increasing quality on high-DPI displays.")
                 }
 
+                NavigableDialog {
+                    id: clientDisplayDialog
+                    width: Math.min(settingsPage.width - 40, 560)
+                    standardButtons: Dialog.Ok | Dialog.Cancel
+                    title: qsTr("Select client displays")
+
+                    property var editableDisplays: []
+
+                    function loadFromPreferences() {
+                        var detectedDisplays = StreamingPreferences.availableClientDisplays()
+                        var preparedDisplays = []
+
+                        for (var i = 0; i < detectedDisplays.length; i++) {
+                            preparedDisplays.push({
+                                "id": detectedDisplays[i].id,
+                                "name": detectedDisplays[i].name,
+                                "width": detectedDisplays[i].width,
+                                "height": detectedDisplays[i].height,
+                                "fps": detectedDisplays[i].fps,
+                                "primary": detectedDisplays[i].primary,
+                                "selected": detectedDisplays[i].selected
+                            })
+                        }
+
+                        editableDisplays = preparedDisplays
+                        if (standardButton(Dialog.Ok)) {
+                            standardButton(Dialog.Ok).enabled = editableDisplays.length > 0
+                        }
+                    }
+
+                    function updateDisplaySelection(index, checked) {
+                        var updatedDisplays = editableDisplays.slice(0)
+                        updatedDisplays[index].selected = checked
+                        editableDisplays = updatedDisplays
+
+                        if (standardButton(Dialog.Ok)) {
+                            standardButton(Dialog.Ok).enabled = selectedCount() > 0
+                        }
+                    }
+
+                    function selectedCount() {
+                        var count = 0
+                        for (var i = 0; i < editableDisplays.length; i++) {
+                            if (editableDisplays[i].selected) {
+                                count++
+                            }
+                        }
+                        return count
+                    }
+
+                    function selectAll() {
+                        var updatedDisplays = editableDisplays.slice(0)
+                        for (var i = 0; i < updatedDisplays.length; i++) {
+                            updatedDisplays[i].selected = true
+                        }
+                        editableDisplays = updatedDisplays
+                        if (standardButton(Dialog.Ok)) {
+                            standardButton(Dialog.Ok).enabled = editableDisplays.length > 0
+                        }
+                    }
+
+                    onAccepted: {
+                        var selectedIds = []
+                        for (var i = 0; i < editableDisplays.length; i++) {
+                            if (editableDisplays[i].selected) {
+                                selectedIds.push(editableDisplays[i].id)
+                            }
+                        }
+
+                        if (selectedIds.length === 0 || selectedIds.length === editableDisplays.length) {
+                            StreamingPreferences.selectedClientDisplayIds = []
+                        }
+                        else {
+                            StreamingPreferences.selectedClientDisplayIds = selectedIds
+                        }
+                    }
+
+                    Column {
+                        width: parent.width
+                        spacing: 10
+
+                        Label {
+                            width: parent.width
+                            text: qsTr("Choose which local Artemis displays Apollo should mirror with virtual displays for this mode.")
+                            wrapMode: Text.Wrap
+                            color: settingsPage.mutedTextColor
+                        }
+
+                        Ui.UiButton {
+                            text: qsTr("Select all detected displays")
+                            tone: "muted"
+                            onClicked: clientDisplayDialog.selectAll()
+                        }
+
+                        Column {
+                            width: parent.width
+                            spacing: 8
+
+                            Repeater {
+                                model: clientDisplayDialog.editableDisplays
+
+                                delegate: CheckBox {
+                                    width: clientDisplayDialog.width - 20
+                                    checked: modelData.selected
+                                    text: modelData.primary
+                                          ? qsTr("%1 (%2x%3 @ %4 Hz, primary)").arg(modelData.name).arg(modelData.width).arg(modelData.height).arg(modelData.fps)
+                                          : qsTr("%1 (%2x%3 @ %4 Hz)").arg(modelData.name).arg(modelData.width).arg(modelData.height).arg(modelData.fps)
+
+                                    onToggled: clientDisplayDialog.updateDisplaySelection(index, checked)
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Row {
                     spacing: 10
-                    visible: StreamingPreferences.enableResolutionScaling && !StreamingPreferences.soleDisplay
+                    visible: StreamingPreferences.enableResolutionScaling && !StreamingPreferences.soleDisplay && !StreamingPreferences.allDisplayStreaming
                     width: parent.width
 
                     Label {

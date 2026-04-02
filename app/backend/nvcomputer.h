@@ -117,6 +117,8 @@ public:
     quint32 serverPermissions;
     bool isApolloHost;
     bool hasPermissionSystem;
+    bool multiDisplayCapable = false;
+    bool multiDisplayDriverReady = false;
     // Remember to update isEqualSerialized() when adding fields here!
     QString apolloVersion;
 
