@@ -8,7 +8,7 @@ using namespace Overlay;
 namespace {
 
 constexpr int kHudWidth = 388;
-constexpr int kHudHeight = 852;
+constexpr int kHudHeight = 864;
 constexpr int kHudPadding = 18;
 constexpr int kHudSectionGap = 10;
 
@@ -609,7 +609,7 @@ SDL_Surface* OverlayManager::renderDebugOverlaySurface()
              headerRect.x + 14,
              headerRect.y + headerRect.h - 18);
 
-    const SDL_Rect summaryRect = nextSection(146);
+    const SDL_Rect summaryRect = nextSection(158);
     drawCard(summaryRect);
     blitText(surface, sectionTitleFont, QStringLiteral("SESSION"), primary, summaryRect.x + 14, summaryRect.y + 12);
 

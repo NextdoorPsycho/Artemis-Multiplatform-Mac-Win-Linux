@@ -1775,14 +1775,43 @@ bool Session::startConnectionAsync()
 
     try {
         NvHTTP http(m_Computer);
-        http.startApp(m_Computer->currentGameId != 0 ? "resume" : "launch",
-                      m_Computer->isNvidiaServerSoftware,
-                      m_App.id, m_App.uuid, &m_StreamConfig,
-                      enableGameOptimizations,
-                      m_Preferences->playAudioOnHost,
-                      m_InputHandler->getAttachedGamepadMask(),
-                      !m_Preferences->multiController,
-                      rtspSessionUrl);
+        const bool shouldPreferFreshLaunch =
+            !m_Computer->isNvidiaServerSoftware && m_Computer->currentGameId != 0;
+        const QString primaryVerb = shouldPreferFreshLaunch ?
+            QStringLiteral("launch") :
+            (m_Computer->currentGameId != 0 ? QStringLiteral("resume") : QStringLiteral("launch"));
+
+        if (shouldPreferFreshLaunch) {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Preferring fresh launch over resume on Sunshine/Apollo to renegotiate audio and stream parameters");
+        }
+
+        try {
+            http.startApp(primaryVerb,
+                          m_Computer->isNvidiaServerSoftware,
+                          m_App.id, m_App.uuid, &m_StreamConfig,
+                          enableGameOptimizations,
+                          m_Preferences->playAudioOnHost,
+                          m_InputHandler->getAttachedGamepadMask(),
+                          !m_Preferences->multiController,
+                          rtspSessionUrl);
+        }
+        catch (const GfeHttpResponseException&) {
+            if (!shouldPreferFreshLaunch) {
+                throw;
+            }
+
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Fresh Sunshine/Apollo launch failed while a game was already running; falling back to resume");
+            http.startApp(QStringLiteral("resume"),
+                          m_Computer->isNvidiaServerSoftware,
+                          m_App.id, m_App.uuid, &m_StreamConfig,
+                          enableGameOptimizations,
+                          m_Preferences->playAudioOnHost,
+                          m_InputHandler->getAttachedGamepadMask(),
+                          !m_Preferences->multiController,
+                          rtspSessionUrl);
+        }
     } catch (const GfeHttpResponseException& e) {
         emit displayLaunchError(tr("Host returned error: %1").arg(e.toQString()));
         return false;

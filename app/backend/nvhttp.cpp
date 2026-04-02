@@ -246,6 +246,11 @@ NvHTTP::startApp(QString verb,
         qInfo() << "Launching app with ID:" << appId << "(no UUID available)";
     }
     
+    const bool effectiveLocalAudio = isGfe ? localAudio : false;
+    if (!isGfe && localAudio) {
+        qInfo() << "Forcing localAudioPlayMode=0 for Sunshine/Apollo to preserve client audio";
+    }
+
     // Continue with standard parameters
     QString allParams = baseParams +
                     "&additionalStates=1&sops="+QString::number(sops ? 1 : 0)+
@@ -254,7 +259,7 @@ NvHTTP::startApp(QString verb,
                     ((streamConfig->supportedVideoFormats & VIDEO_FORMAT_MASK_10BIT) ?
                         "&hdrMode=1&clientHdrCapVersion=0&clientHdrCapSupportedFlagsInUint32=0&clientHdrCapMetaDataId=NV_STATIC_METADATA_TYPE_1&clientHdrCapDisplayData=0x0x0x0x0x0x0x0x0x0x0" :
                         "")+
-                    "&localAudioPlayMode="+QString::number(localAudio ? 1 : 0)+
+                    "&localAudioPlayMode="+QString::number(effectiveLocalAudio ? 1 : 0)+
                     "&surroundAudioInfo="+QString::number(SURROUNDAUDIOINFO_FROM_AUDIO_CONFIGURATION(streamConfig->audioConfiguration))+
                     "&remoteControllersBitmap="+QString::number(gamepadMask)+
                     "&gcmap="+QString::number(gamepadMask)+
