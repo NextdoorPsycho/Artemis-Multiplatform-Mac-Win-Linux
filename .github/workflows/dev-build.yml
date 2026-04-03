@@ -1,5 +1,6 @@
 name: Development Build
 
+# Artemis Desktop CI/CD Pipeline - Auto-generated build for all platforms
 # This workflow handles development builds with intelligent build skipping:
 # - Feature branches: Build artifacts, no releases (testing only)  
 # - Develop branch: Build artifacts + create development releases (when meaningful changes are merged)
@@ -388,6 +389,13 @@ jobs:
     - name: Setup MSVC
       uses: ilammy/msvc-dev-cmd@v1
     
+    - name: Install 7z
+      run: |
+        choco install 7zip -y
+        refreshenv
+        # Verify 7z is available
+        where 7z || echo "7z not found in PATH after install"
+    
     - name: Update version file for development build
       env:
         SEMANTIC_VERSION: ${{ needs.setup-version.outputs.version }}
@@ -400,11 +408,27 @@ jobs:
       env:
         SEMANTIC_VERSION: ${{ needs.setup-version.outputs.version }}
       run: |
-        # Add Qt to PATH for the build script
-        $env:PATH = "$env:Qt6_DIR\bin;$env:PATH"
+        # Add Qt and 7z to PATH for the build script
+        $env:PATH = "$env:Qt6_DIR\bin;C:\ProgramData\chocolatey\lib\7zip\tools;$env:PATH"
+        
+        # Verify tools are available
+        Write-Host "Qt6_DIR: $env:Qt6_DIR"
+        Write-Host "Checking for qmake..."
+        where qmake || where qmake6 || echo "qmake not found"
+        Write-Host "Checking for 7z..."
+        where 7z || echo "7z not found in PATH"
+        Write-Host "Current directory: $PWD"
+        Write-Host "Contents of build directory before build:"
+        Get-ChildItem -Path "build" -ErrorAction SilentlyContinue | Format-Table -AutoSize
         
         # Run our Artemis build script that handles everything
-        cmd /c "scripts\windows\build-artemis-arch.bat release"
+        cmd /c "scripts\windows\build-artemis-arch.bat release 2>&1"
+        
+        Write-Host "Build script exit code: $LASTEXITCODE"
+        
+        # Show what was created
+        Write-Host "Contents of build directory after build:"
+        Get-ChildItem -Path "build" -Recurse -ErrorAction SilentlyContinue | Select-Object FullName, Length | Format-Table -AutoSize
         
         if ($LASTEXITCODE -ne 0) {
           echo "Build failed with exit code $LASTEXITCODE"
@@ -415,6 +439,11 @@ jobs:
       env:
         SEMANTIC_VERSION: ${{ needs.setup-version.outputs.version }}
       run: |
+        # Debug: Show current directory and contents
+        Write-Host "Current directory: $PWD"
+        Write-Host "Contents of build directory:"
+        Get-ChildItem -Path "build" -Recurse -ErrorAction SilentlyContinue | Select-Object FullName, Length | Format-Table -AutoSize
+        
         # Find the generated portable ZIP file
         $zipFile = Get-ChildItem -Path "build\installer-x64-release" -Filter "ArtemisPortable-*.zip" | Select-Object -First 1
         
@@ -424,8 +453,9 @@ jobs:
           Move-Item $zipFile.FullName $newZipName
           echo "Created x64 portable ZIP: $newZipName"
         } else {
-          echo "ERROR: Portable ZIP not found"
-          Get-ChildItem -Path "build\installer-x64-release" -Recurse
+          echo "ERROR: Portable ZIP not found in build\installer-x64-release"
+          echo "Showing all files in build directory:"
+          Get-ChildItem -Path "build" -Recurse -ErrorAction SilentlyContinue | Select-Object FullName | Format-Table -AutoSize
           exit 1
         }
     
@@ -502,6 +532,9 @@ jobs:
       uses: ilammy/msvc-dev-cmd@v1
       with:
         arch: amd64_arm64  # Cross-compile from x64 host to ARM64 target
+    
+    - name: Install 7z
+      run: choco install 7zip -y
         
     - name: Verify MSVC ARM64 Setup
       run: |
@@ -526,14 +559,48 @@ jobs:
       run: |
         # Find and set up Qt ARM64 environment
         echo "Setting up Qt ARM64 environment..."
-        $qtArm64Path = "D:\a\artemis\Qt\6.8.3\msvc2022_arm64"
         
-        if (-not (Test-Path $qtArm64Path)) {
-          echo "ERROR: Qt ARM64 not found at expected path: $qtArm64Path"
-          echo "Available Qt installations:"
-          Get-ChildItem "D:\a\artemis\Qt\6.8.3" -ErrorAction SilentlyContinue | Select-Object Name
+        # Search for Qt ARM64 in all possible locations
+        $possiblePaths = @(
+          "D:\a\Artemis-Multiplatform-Mac-Win-Linux\Qt\6.8.3\msvc2022_arm64",
+          "D:\a\artemis\Qt\6.8.3\msvc2022_arm64",
+          "D:\a\Qt\6.8.3\msvc2022_arm64"
+        )
+        
+        $qtArm64Path = $null
+        foreach ($path in $possiblePaths) {
+          if (Test-Path $path) {
+            $qtArm64Path = $path
+            break
+          }
+        }
+        
+        if (-not $qtArm64Path) {
+          echo "ERROR: Qt ARM64 not found in any expected location"
+          echo "Searching all D:\a for Qt ARM64..."
+          Get-ChildItem "D:\a" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            $qtPath = Join-Path $_.FullName "Qt\6.8.3\msvc2022_arm64"
+            if (Test-Path $qtPath) {
+              echo "Found: $qtPath"
+              $qtArm64Path = $qtPath
+            }
+          }
+        }
+        
+        if (-not $qtArm64Path) {
+          echo "ERROR: Qt ARM64 not found"
+          echo "Available Qt 6.8.3 directories:"
+          Get-ChildItem "D:\a" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            $qtDir = Join-Path $_.FullName "Qt\6.8.3"
+            if (Test-Path $qtDir) {
+              echo "  $($_.FullName)\Qt\6.8.3"
+              Get-ChildItem $qtDir -Directory -ErrorAction SilentlyContinue | Select-Object Name
+            }
+          }
           exit 1
         }
+        
+        echo "Found Qt ARM64 at: $qtArm64Path"
         
         # Set Qt environment
         $env:Qt6_DIR = $qtArm64Path
@@ -649,6 +716,9 @@ jobs:
         
         # Also install Visual Studio Build Tools (includes MSBuild) for compatibility
         choco install visualstudio2022buildtools --package-parameters "--includeRecommended --includeOptional --quiet --wait" -y
+        
+        # Install 7zip for creating ZIP archives
+        choco install 7zip -y
     
     - name: Setup MSVC
       uses: ilammy/msvc-dev-cmd@v1
@@ -686,8 +756,27 @@ jobs:
       env:
         SEMANTIC_VERSION: ${{ needs.setup-version.outputs.version }}
       run: |
-        # Set up Qt ARM64 environment
-        $qtArm64Path = "D:\a\artemis\Qt\6.8.3\msvc2022_arm64"
+        # Set up Qt ARM64 environment - search in all possible locations
+        $possiblePaths = @(
+          "D:\a\Artemis-Multiplatform-Mac-Win-Linux\Qt\6.8.3\msvc2022_arm64",
+          "D:\a\artemis\Qt\6.8.3\msvc2022_arm64",
+          "D:\a\Qt\6.8.3\msvc2022_arm64"
+        )
+        
+        $qtArm64Path = $null
+        foreach ($path in $possiblePaths) {
+          if (Test-Path $path) {
+            $qtArm64Path = $path
+            break
+          }
+        }
+        
+        if (-not $qtArm64Path) {
+          echo "ERROR: Qt ARM64 not found in any expected location"
+          exit 1
+        }
+        
+        echo "Found Qt ARM64 at: $qtArm64Path"
         $env:Qt6_DIR = $qtArm64Path
         $env:PATH = "$qtArm64Path\bin;$env:PATH"
         

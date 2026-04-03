@@ -854,7 +854,7 @@ Overlay::OverlayManager::DebugOverlaySnapshot FFmpegVideoDecoder::buildDebugOver
     snapshot.valid = true;
 
     const float elapsedSeconds = stats.measurementStartTimestamp != 0 ?
-                std::max(0.001f, (SDL_GetTicks() - stats.measurementStartTimestamp) / 1000.0f) :
+                (std::max)(0.001f, static_cast<float>((SDL_GetTicks() - stats.measurementStartTimestamp) / 1000.0f)) :
                 1.0f;
 
     snapshot.streamWidth = m_VideoDecoderCtx != nullptr ? m_VideoDecoderCtx->width : 0;
