@@ -84,6 +84,23 @@ struct ClientDisplayGeometry {
     bool primary;
 };
 
+QString clientDisplayId(QScreen* screen, int screenIndex)
+{
+#ifdef Q_OS_DARWIN
+    constexpr uint32_t kMaxDisplays = 32;
+    CGDirectDisplayID displayIds[kMaxDisplays];
+    uint32_t displayCount = 0;
+
+    if (CGGetActiveDisplayList(kMaxDisplays, displayIds, &displayCount) == kCGErrorSuccess &&
+        screenIndex >= 0 &&
+        static_cast<uint32_t>(screenIndex) < displayCount) {
+        return QStringLiteral("cgdisplay:%1").arg(static_cast<qulonglong>(displayIds[screenIndex]));
+    }
+#endif
+
+    return screen ? screen->name() : QString();
+}
+
 ClientDisplayGeometry getClientDisplayGeometry(QScreen* screen, int screenIndex)
 {
 #ifdef Q_OS_DARWIN
@@ -464,8 +481,9 @@ QVariantList StreamingPreferences::availableClientDisplays() const
         }
 
         const auto displayGeometry = getClientDisplayGeometry(screen, screenIndex);
+        const QString displayId = clientDisplayId(screen, screenIndex);
         QVariantMap display;
-        display["id"] = screen->name();
+        display["id"] = displayId;
         display["name"] = screen->name();
         display["width"] = displayGeometry.width;
         display["height"] = displayGeometry.height;
@@ -473,7 +491,7 @@ QVariantList StreamingPreferences::availableClientDisplays() const
         display["x"] = displayGeometry.x;
         display["y"] = displayGeometry.y;
         display["primary"] = displayGeometry.primary;
-        display["selected"] = selectedClientDisplayIds.isEmpty() || selectedClientDisplayIds.contains(screen->name());
+        display["selected"] = selectedClientDisplayIds.isEmpty() || selectedClientDisplayIds.contains(displayId);
         displays.append(display);
     }
 

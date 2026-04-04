@@ -43,6 +43,23 @@ struct ClientDisplayGeometry {
     bool primary;
 };
 
+QString clientDisplayId(QScreen* screen, int screenIndex)
+{
+#ifdef Q_OS_DARWIN
+    constexpr uint32_t kMaxDisplays = 32;
+    CGDirectDisplayID displayIds[kMaxDisplays];
+    uint32_t displayCount = 0;
+
+    if (CGGetActiveDisplayList(kMaxDisplays, displayIds, &displayCount) == kCGErrorSuccess &&
+        screenIndex >= 0 &&
+        static_cast<uint32_t>(screenIndex) < displayCount) {
+        return QStringLiteral("cgdisplay:%1").arg(static_cast<qulonglong>(displayIds[screenIndex]));
+    }
+#endif
+
+    return screen ? screen->name() : QString();
+}
+
 ClientDisplayGeometry getClientDisplayGeometry(QScreen* screen, int screenIndex)
 {
 #ifdef Q_OS_DARWIN
@@ -99,7 +116,8 @@ QByteArray serializeClientDisplays(const QStringList& selectedDisplayIds)
             continue;
         }
 
-        if (!selectedDisplayIds.isEmpty() && !selectedDisplayIds.contains(screen->name())) {
+        const QString displayId = clientDisplayId(screen, screenIndex);
+        if (!selectedDisplayIds.isEmpty() && !selectedDisplayIds.contains(displayId)) {
             skippedForSelection = true;
             continue;
         }
@@ -107,7 +125,7 @@ QByteArray serializeClientDisplays(const QStringList& selectedDisplayIds)
         const auto displayGeometry = getClientDisplayGeometry(screen, screenIndex);
 
         QJsonObject display;
-        display["id"] = screen->name();
+        display["id"] = displayId;
         display["width"] = displayGeometry.width;
         display["height"] = displayGeometry.height;
         display["fps"] = displayGeometry.fps > 0 ? displayGeometry.fps : 60000;
@@ -127,7 +145,7 @@ QByteArray serializeClientDisplays(const QStringList& selectedDisplayIds)
             const auto displayGeometry = getClientDisplayGeometry(screen, screenIndex);
 
             QJsonObject display;
-            display["id"] = screen->name();
+            display["id"] = clientDisplayId(screen, screenIndex);
             display["width"] = displayGeometry.width;
             display["height"] = displayGeometry.height;
             display["fps"] = displayGeometry.fps > 0 ? displayGeometry.fps : 60000;
