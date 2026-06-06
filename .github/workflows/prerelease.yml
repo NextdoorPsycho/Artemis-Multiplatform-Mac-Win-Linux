@@ -179,7 +179,9 @@ jobs:
         run: |
           echo "${NUMERIC}" > app/version.txt
           export PATH="$QT_ROOT_DIR/bin:$PATH"
-          ./scripts/linux/build-appimage.sh
+          # build-appimage.sh has a #!/bin/sh shebang but uses bash-isms (pushd/popd); Ubuntu's
+          # /bin/sh is dash, so run it explicitly with bash.
+          bash ./scripts/linux/build-appimage.sh
       - name: Rename AppImage by commit
         env:
           SHORT_SHA: ${{ needs.version.outputs.short_sha }}

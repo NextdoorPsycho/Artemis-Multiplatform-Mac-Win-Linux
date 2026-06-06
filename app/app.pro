@@ -54,6 +54,10 @@ win32 {
 
     # Work around a conflict with math.h inclusion between SDL and Qt 6
     DEFINES += _USE_MATH_DEFINES
+
+    # Prevent <windows.h> from defining min()/max() macros, which break std::min/std::max
+    # (e.g. app/streaming/video/ffmpeg.cpp and overlaymanager.cpp) on MSVC.
+    DEFINES += NOMINMAX
 }
 macx:!disable-prebuilts {
     INCLUDEPATH += $$PWD/../libs/mac/include
