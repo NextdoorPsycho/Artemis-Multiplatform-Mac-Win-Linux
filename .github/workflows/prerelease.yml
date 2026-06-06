@@ -179,6 +179,10 @@ jobs:
         run: |
           echo "${NUMERIC}" > app/version.txt
           export PATH="$QT_ROOT_DIR/bin:$PATH"
+          # Qt 6.8 ships a Mimer SQL driver plugin whose libmimerapi.so is not installed; linuxdeployqt
+          # scans all plugins and aborts on it ("libmimerapi.so => not found"). Artemis does not use
+          # SQL, so remove the plugin before packaging.
+          rm -f "$QT_ROOT_DIR"/plugins/sqldrivers/libqsqlmimer.so
           # build-appimage.sh has a #!/bin/sh shebang but uses bash-isms (pushd/popd); Ubuntu's
           # /bin/sh is dash, so run it explicitly with bash.
           bash ./scripts/linux/build-appimage.sh
