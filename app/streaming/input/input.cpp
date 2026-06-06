@@ -13,10 +13,6 @@
 #include <QDir>
 #include <QGuiApplication>
 
-#ifdef Q_OS_DARWIN
-extern "C" int LiSendMouseMoveEventRaw(int deltaX, int deltaY);
-#endif
-
 namespace {
 bool isMouseDiagEnabled()
 {
@@ -767,7 +763,12 @@ void SdlInputHandler::nativeRelativeMouseThreadProc()
             recordDesktopMouseDiagSample(xrel, yrel, 1, 1, 1, 0, 1, warpHint);
 
             if (xrel != 0 || yrel != 0) {
-                LiSendMouseMoveEventRaw(xrel, yrel);
+                // The deltas come from the native (un-accelerated) macOS capture; send them through
+                // the standard relative-mouse path. moonlight-common-c has no separate "raw" packet,
+                // so clamp the int deltas to the short range its API accepts.
+                const short dx = (short)(xrel > 32767 ? 32767 : (xrel < -32767 ? -32767 : xrel));
+                const short dy = (short)(yrel > 32767 ? 32767 : (yrel < -32767 ? -32767 : yrel));
+                LiSendMouseMoveEvent(dx, dy);
             }
         }
 
