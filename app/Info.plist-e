@@ -38,10 +38,14 @@
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Artemis uses the local network to connect to your gaming PC for streaming.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_nvstream._tcp</string>
+	</array>
 	<key>CFBundleVersion</key>
-	<string>0.5.6</string>
+	<string>0.6.7</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.5.6</string>
+	<string>0.6.7</string>
 	<key>CFBundleDisplayName</key>
 	<string>Artemis</string>
 </dict>

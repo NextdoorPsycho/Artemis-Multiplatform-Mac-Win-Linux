@@ -1,0 +1,225 @@
+name: Pre-release (every push)
+
+# Builds Artemis for macOS, Windows, and Linux on EVERY push and publishes a single per-commit
+# GitHub pre-release with all platform artifacts attached.
+#
+# This is intentionally separate from dev-build.yml (which keeps its version.txt-based release
+# flow). Here the release identity is the git commit: the tag is pre-<short-sha> and artifacts are
+# named by short SHA. A numeric version (app/version.txt base + commit count) is written into
+# app/version.txt only for the duration of the build so the existing packaging scripts and the
+# Windows .rc resource get a valid MAJOR.MINOR.PATCH.BUILD value. Nothing is committed back.
+#
+# Each platform job reuses the maintained build scripts documented in docs/BUILD_SYSTEM.md:
+#   macOS   -> scripts/macos/generate-dmg.sh
+#   Windows -> scripts/windows/build-artemis-arch.bat
+#   Linux   -> scripts/linux/build-appimage.sh
+# To add another target (e.g. Windows ARM64), copy a job and point it at the same script.
+
+on:
+  push:
+    branches:
+      - '**'          # every push to any branch (tag pushes do not match -> no release recursion)
+  workflow_dispatch:
+
+concurrency:
+  group: prerelease-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write     # required for the release job to create tags/releases
+
+env:
+  QT_VERSION: '6.8.3'
+
+jobs:
+  version:
+    name: Compute version
+    runs-on: ubuntu-latest
+    outputs:
+      short_sha: ${{ steps.v.outputs.short_sha }}
+      numeric: ${{ steps.v.outputs.numeric }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so the commit count is correct
+      - name: Derive version metadata
+        id: v
+        run: |
+          SHORT_SHA="$(git rev-parse --short=7 HEAD)"
+          COUNT="$(git rev-list --count HEAD)"
+          BASE="$(tr -d '\n\r' < app/version.txt)"   # e.g. 0.6.7
+          # 4-segment numeric for Windows .rc / packaging; commit count is the build number.
+          NUMERIC="${BASE}.${COUNT}"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "numeric=${NUMERIC}" >> "$GITHUB_OUTPUT"
+          echo "Release identity: commit ${SHORT_SHA} | numeric ${NUMERIC}"
+
+  macos:
+    name: macOS (universal DMG)
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - name: Setup Qt ${{ env.QT_VERSION }}
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: mac
+          target: desktop
+          modules: qtmultimedia
+          cache: true
+      - name: Install dependencies
+        run: brew install create-dmg ffmpeg opus sdl2 sdl2_ttf
+      - name: Build universal DMG
+        env:
+          NUMERIC: ${{ needs.version.outputs.numeric }}
+          MACOSX_DEPLOYMENT_TARGET: '14.0'
+        run: |
+          echo "${NUMERIC}" > app/version.txt
+          export PATH="$QT_ROOT_DIR/bin:$PATH"
+          ./scripts/macos/generate-dmg.sh Release
+      - name: Rename DMG by commit
+        env:
+          SHORT_SHA: ${{ needs.version.outputs.short_sha }}
+        run: |
+          DMG="$(find build/installer-Release -name '*.dmg' | head -1)"
+          test -n "$DMG" || { echo "No DMG produced"; find build -name '*.dmg'; exit 1; }
+          mkdir -p out
+          cp "$DMG" "out/artemis-macos-universal-${SHORT_SHA}.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: out/*.dmg
+          if-no-files-found: error
+
+  windows-x64:
+    name: Windows x64 (portable + MSI)
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - name: Setup Qt ${{ env.QT_VERSION }}
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          modules: qtmultimedia
+          cache: true
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Build portable + MSI
+        shell: pwsh
+        env:
+          NUMERIC: ${{ needs.version.outputs.numeric }}
+        run: |
+          $env:NUMERIC | Out-File -Encoding ascii -NoNewline app\version.txt
+          $env:PATH = "$env:QT_ROOT_DIR\bin;$env:PATH"
+          cmd /c "scripts\windows\build-artemis-arch.bat release"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Collect artifacts by commit
+        shell: pwsh
+        env:
+          SHORT_SHA: ${{ needs.version.outputs.short_sha }}
+        run: |
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          $zip = Get-ChildItem -Path build\installer-x64-release -Filter "ArtemisPortable-*.zip" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($zip) { Copy-Item $zip.FullName "out\artemis-windows-x64-portable-$env:SHORT_SHA.zip" } else { Write-Error "Portable ZIP not found"; Get-ChildItem -Recurse build\installer-x64-release; exit 1 }
+          $msi = Get-ChildItem -Path build\installer-x64-release -Filter "*.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($msi) { Copy-Item $msi.FullName "out\artemis-windows-x64-$env:SHORT_SHA.msi" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: out/*
+          if-no-files-found: error
+
+  linux:
+    name: Linux (AppImage)
+    needs: version
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - name: Setup Qt ${{ env.QT_VERSION }}
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          modules: qtmultimedia
+          cache: true
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential libegl1-mesa-dev libgl1-mesa-dev libopus-dev libsdl2-dev \
+            libsdl2-ttf-dev libssl-dev libavcodec-dev libavformat-dev libavutil-dev \
+            libswscale-dev libva-dev libvdpau-dev libxkbcommon-dev wayland-protocols \
+            libdrm-dev nasm libgbm-dev libfreetype6-dev libasound2-dev libdbus-1-dev \
+            libpulse-dev libudev-dev libx11-dev libxcursor-dev libxext-dev libxi-dev \
+            libxinerama-dev libxrandr-dev libxss-dev libxv-dev libplacebo-dev fuse libfuse2
+      - name: Install linuxdeployqt
+        run: |
+          sudo wget -q -O /usr/local/bin/linuxdeployqt \
+            https://github.com/probonopd/linuxdeployqt/releases/download/continuous/linuxdeployqt-continuous-x86_64.AppImage
+          sudo chmod +x /usr/local/bin/linuxdeployqt
+          echo "APPIMAGE_EXTRACT_AND_RUN=1" >> "$GITHUB_ENV"
+      - name: Build AppImage
+        env:
+          NUMERIC: ${{ needs.version.outputs.numeric }}
+        run: |
+          echo "${NUMERIC}" > app/version.txt
+          export PATH="$QT_ROOT_DIR/bin:$PATH"
+          ./scripts/linux/build-appimage.sh
+      - name: Rename AppImage by commit
+        env:
+          SHORT_SHA: ${{ needs.version.outputs.short_sha }}
+        run: |
+          IMG="$(find build/installer-release -name '*.AppImage' | head -1)"
+          test -n "$IMG" || { echo "No AppImage produced"; find build -name '*.AppImage'; exit 1; }
+          mkdir -p out
+          cp "$IMG" "out/artemis-linux-x86_64-${SHORT_SHA}.AppImage"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: out/*.AppImage
+          if-no-files-found: error
+
+  release:
+    name: Publish pre-release
+    needs: [version, macos, windows-x64, linux]
+    if: ${{ always() }}   # publish whatever platform builds succeeded
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: List artifacts
+        run: ls -laR dist || true
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: pre-${{ needs.version.outputs.short_sha }}
+          name: Artemis pre-release ${{ needs.version.outputs.short_sha }}
+          prerelease: true
+          target_commitish: ${{ github.sha }}
+          files: dist/**/*
+          body: |
+            Automated multi-platform pre-release.
+
+            - Commit: `${{ github.sha }}`
+            - Build version: `${{ needs.version.outputs.numeric }}`
+
+            Artifacts: macOS universal DMG, Windows x64 portable + MSI, Linux x86_64 AppImage.
+            These are **unsigned** development builds.

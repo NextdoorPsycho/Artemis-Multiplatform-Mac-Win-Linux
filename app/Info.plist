@@ -43,9 +43,9 @@
 		<string>_nvstream._tcp</string>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>VERSION</string>
+	<string>0.6.7</string>
 	<key>CFBundleShortVersionString</key>
-	<string>VERSION</string>
+	<string>0.6.7</string>
 	<key>CFBundleDisplayName</key>
 	<string>Artemis</string>
 </dict>

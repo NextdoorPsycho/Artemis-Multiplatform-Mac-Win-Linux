@@ -24,5 +24,17 @@
         <file alias="gui/ServerCommands.qml">gui/ServerCommands.qml</file>
         <file alias="gui/QuickMenu.qml">gui/QuickMenu.qml</file>
         <file alias="gui/Toast.qml">gui/Toast.qml</file>
+        <file alias="gui/ui/UiBadge.qml">gui/ui/UiBadge.qml</file>
+        <file alias="gui/ui/UiButton.qml">gui/ui/UiButton.qml</file>
+        <file alias="gui/ui/UiCard.qml">gui/ui/UiCard.qml</file>
+        <file alias="gui/ui/UiEmptyState.qml">gui/ui/UiEmptyState.qml</file>
+        <file alias="gui/ui/UiIcon.qml">gui/ui/UiIcon.qml</file>
+        <file alias="gui/ui/UiIconButton.qml">gui/ui/UiIconButton.qml</file>
+        <file alias="gui/ui/UiInput.qml">gui/ui/UiInput.qml</file>
+        <file alias="gui/ui/UiNavButton.qml">gui/ui/UiNavButton.qml</file>
+        <file alias="gui/ui/UiSectionHeader.qml">gui/ui/UiSectionHeader.qml</file>
+        <file alias="gui/ui/UiSlider.qml">gui/ui/UiSlider.qml</file>
+        <file alias="gui/ui/UiSpinBox.qml">gui/ui/UiSpinBox.qml</file>
+        <file alias="gui/ui/UiToggle.qml">gui/ui/UiToggle.qml</file>
     </qresource>
 </RCC>
